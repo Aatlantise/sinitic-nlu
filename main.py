@@ -17,7 +17,7 @@ class SiniticPreTrainer:
         self.tokenized_ds = None
         self.lm_dataset = None
 
-    def prerocess_data(self):
+    def preprocess_data(self):
         pass
 
     def train(self):
@@ -68,10 +68,10 @@ class CantoPreTrainer(SiniticPreTrainer):
 class WuPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="wuu"):
         super().__init__(lang)
-        self.ds = load_dataset("wikimedia/wikipedia", "20231101.wuu", split="train")
+        self.ds = load_dataset("wikimedia/wikipedia", "20231101.wuu")
         self.tokenizer = BertTokenizerFast.from_pretrained("bert-base-chinese")
 
-    def preprocess(self):
+    def preprocess_data(self):
         self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
 
         def tokenize(example):
