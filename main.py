@@ -7,12 +7,14 @@ from transformers import (
     DataCollatorForLanguageModeling,
     EarlyStoppingCallback
 )
+import os
 
 class SiniticPreTrainer:
-    def __init__(self, lang=""):
+    def __init__(self, lang="", model_dir="./bert-base-chinese-local"):
         self.ds = None
         self.tokenizer = None
         self.lang = lang
+        self.model_dir = model_dir
         self.tokenized_ds = None
         self.lm_dataset = None
 
@@ -32,7 +34,7 @@ class SiniticPreTrainer:
             mlm_probability=0.15
         )
 
-        model = BertForMaskedLM.from_pretrained("./bert-base-chinese-local")
+        model = BertForMaskedLM.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
             output_dir=f"./{self.lang}-pretrain",
@@ -63,10 +65,19 @@ class SiniticPreTrainer:
         trainer.save_model(f"./{self.lang}-pretrain")
 
 class CantoPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="yue"):
-        super().__init__(lang)
+    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
+        super().__init__(lang, model_dir)
+        if not os.path.exists("./yue-wiki-local"):
+            raise FileNotFoundError(
+                "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
+            )
+        if not os.path.exists(self.model_dir):
+            raise FileNotFoundError(
+                f"Model directory {self.model_dir} not found."
+                f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
+            )
         self.ds = load_from_disk("./yue-wiki-local")
-        self.tokenizer = BertTokenizerFast.from_pretrained("./bert-base-chinese-local")
+        self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
         def tokenize_function(examples):
@@ -80,10 +91,19 @@ class CantoPreTrainer(SiniticPreTrainer):
         }
 
 class WuPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="wuu"):
-        super().__init__(lang)
-        self.ds = load_dataset("wikimedia/wikipedia", "20231101.wuu")
-        self.tokenizer = BertTokenizerFast.from_pretrained("bert-base-chinese")
+    def __init__(self, lang="wuu", model_dir="./bert-base-chinese-local"):
+        super().__init__(lang, model_dir)
+        if not os.path.exists("./wuu-wiki-local"):
+            raise FileNotFoundError(
+                "Wu Wiki dataset not found. Please first run `python download.py --lang=wuu`."
+            )
+        if not os.path.exists(self.model_dir):
+            raise FileNotFoundError(
+                f"Model directory {self.model_dir} not found."
+                f"Please first run `python download.py --lang=wuu --model_dir={self.model_dir}`."
+            )
+        self.ds = load_from_disk("./wuu-wiki-local")
+        self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
         self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
@@ -105,4 +125,8 @@ class WuPreTrainer(SiniticPreTrainer):
             }
             return result
 
-        self.lm_dataset = tokenized_ds.map(group_texts, batched=True)
+        train_dataset, validation_dataset = tokenized_ds["train"].train_test_split(test_size=0.1).values()
+        self.lm_dataset = {
+            "train": train_dataset.map(group_texts, batched=True),
+            "validation": validation_dataset.map(group_texts, batched=True)
+        }
