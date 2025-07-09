@@ -8,6 +8,9 @@ def download(args):
         print("Downloading Cantonese Wiki dataset...")
         ds = load_dataset("R5dwMg/zh-wiki-yue-long")
         ds.save_to_disk("./yue-wiki-local")
+        print("Downloading Cantonese NLI dataset...")
+        ds = load_dataset("hon9kon9ize/yue-all-nli")
+        ds.save_to_disk("./yue-nli-local")
         print("Downloading BERT tokenizer and model...")
         BertTokenizerFast.from_pretrained('bert-base-chinese').save_pretrained(args.model_dir)
     elif args.lang == "wuu":
