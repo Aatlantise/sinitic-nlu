@@ -1,4 +1,3 @@
 # IDE artifacts
 .idea/*
-run.sh
-env.sh
+*.sh

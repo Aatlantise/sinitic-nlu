@@ -1,13 +1,15 @@
-from datasets import load_dataset, load_from_disk
+from datasets import load_from_disk, Dataset
 from transformers import (
     BertForMaskedLM,
     BertTokenizerFast,
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-    EarlyStoppingCallback
+    EarlyStoppingCallback, BertForSequenceClassification
 )
 import os
+import numpy as np
+from sklearn.metrics import accuracy_score, confusion_matrix
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./bert-base-chinese-local"):
@@ -130,3 +132,92 @@ class WuPreTrainer(SiniticPreTrainer):
             "train": train_dataset.map(group_texts, batched=True),
             "validation": validation_dataset.map(group_texts, batched=True)
         }
+
+
+def compute_nli_metrics(eval_pred):
+    logits, labels = eval_pred
+    preds = np.argmax(logits, axis=1)
+
+    acc = accuracy_score(labels, preds)
+    cm = confusion_matrix(labels, preds, labels=[0, 1])
+
+    return {
+        "preds": preds,
+        "labels": labels,
+        "accuracy": acc,
+        "confusion_matrix": cm.tolist()
+    }
+
+
+class CantoNLIFineTuner(CantoPreTrainer):
+    def __init__(self, lang, model_dir):
+        super().__init__(lang, model_dir)
+        self.finetune_dataset = None
+
+    def preprocess_data(self):
+        nli_data = load_from_disk("./yue-nli-local")
+
+        def tokenize_function(examples):
+            return self.tokenizer(examples["input_text"], return_special_tokens_mask=True, truncation=True,
+                                  padding="max_length", max_length=128)
+
+        train, val, test = (
+            nli_data["train"],
+            nli_data["dev"],
+            nli_data["test"]
+        )
+
+        def yue_nli_collator(split):
+            nested_nli_list = [
+                [
+              {"input_text": f"{s['anchor']} [SEP] {s['positive']}", "label": 0},
+              {"input_text": f"{s['anchor']} [SEP] {s['negative']}", "label": 1}
+              ]
+                               for s in split]
+
+            return Dataset.from_list([e for s in nested_nli_list for e in s])
+
+        self.finetune_dataset = {
+            "train": yue_nli_collator(train).map(tokenize_function, batched=True),
+            "validation": yue_nli_collator(val).map(tokenize_function, batched=True),
+            "test": yue_nli_collator(test).map(tokenize_function, batched=True)
+        }
+
+    def finetune(self):
+        self.preprocess_data()
+
+        if any({split not in self.finetune_dataset for split in ["train", "validation", "test"]}):
+            raise ValueError(f"'train' and 'validation' splits must be present in finetune_dataset."
+                             f"Found: {self.finetune_dataset.keys()}")
+
+        model = BertForSequenceClassification.from_pretrained(self.model_dir)
+
+        training_args = TrainingArguments(
+            output_dir=f"./{self.lang}-nlu",
+            overwrite_output_dir=True,
+            num_train_epochs=3,
+            per_device_train_batch_size=16,
+            save_steps=1000,
+            save_total_limit=2,
+            logging_steps=100,
+            report_to="tensorboard",
+            eval_strategy="steps",
+            eval_steps=500,
+        )
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=self.finetune_dataset["train"],
+            eval_dataset=self.finetune_dataset["validation"],
+        )
+
+        trainer.train()
+        trainer.save_model(f"./{self.lang}-nlu")
+
+        trainer.compute_metrics = compute_nli_metrics
+        metrics = trainer.evaluate(
+            eval_dataset=self.finetune_dataset["test"],
+            )
+        print(f"Accuracy: {metrics['accuracy']}")
+        print(f"Confusion_matrix: {metrics['confusion_matrix']}")
