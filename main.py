@@ -39,7 +39,7 @@ class SiniticPreTrainer:
         model = BertForMaskedLM.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"./{self.lang}-pretrain",
+            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain",
             overwrite_output_dir=True,
             num_train_epochs=10,
             per_device_train_batch_size=16,
@@ -64,7 +64,7 @@ class SiniticPreTrainer:
         )
 
         trainer.train()
-        trainer.save_model(f"./{self.lang}-pretrain")
+        trainer.save_model(f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain")
 
 class CantoPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
@@ -193,7 +193,7 @@ class CantoNLIFineTuner(CantoPreTrainer):
         model = BertForSequenceClassification.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"./{self.lang}-nlu",
+            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-nlu",
             overwrite_output_dir=True,
             num_train_epochs=3,
             per_device_train_batch_size=16,
