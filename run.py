@@ -21,7 +21,7 @@ def run(args):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--lang", default="yue")
-    parser.add_argument("--model_dir", default="./bert-base-chinese-local")
+    parser.add_argument("--model_dir", default="./models/bert-base-chinese-local")
     parser.add_argument("--pretrain", action="store_true", default=False)
     parser.add_argument("--finetune", action="store_true", default=False)
     args = parser.parse_args()

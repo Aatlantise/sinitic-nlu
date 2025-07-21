@@ -5,14 +5,14 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-    EarlyStoppingCallback, BertForSequenceClassification
+    EarlyStoppingCallback, BertForSequenceClassification,
 )
 import os
 import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix
 
 class SiniticPreTrainer:
-    def __init__(self, lang="", model_dir="./bert-base-chinese-local"):
+    def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
         self.ds = None
         self.tokenizer = None
         self.lang = lang
@@ -67,9 +67,9 @@ class SiniticPreTrainer:
         trainer.save_model(f"./{self.lang}-pretrain")
 
 class CantoPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
+    def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local"):
         super().__init__(lang, model_dir)
-        if not os.path.exists("./yue-wiki-local"):
+        if not os.path.exists("./data/yue-wiki-local"):
             raise FileNotFoundError(
                 "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
             )
@@ -78,7 +78,7 @@ class CantoPreTrainer(SiniticPreTrainer):
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./yue-wiki-local")
+        self.ds = load_from_disk("./data/yue-wiki-local")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
@@ -93,9 +93,9 @@ class CantoPreTrainer(SiniticPreTrainer):
         }
 
 class WuPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="wuu", model_dir="./bert-base-chinese-local"):
+    def __init__(self, lang="wuu", model_dir="./models/bert-base-chinese-local"):
         super().__init__(lang, model_dir)
-        if not os.path.exists("./wuu-wiki-local"):
+        if not os.path.exists("./data/wuu-wiki-local"):
             raise FileNotFoundError(
                 "Wu Wiki dataset not found. Please first run `python download.py --lang=wuu`."
             )
@@ -104,7 +104,7 @@ class WuPreTrainer(SiniticPreTrainer):
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=wuu --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./wuu-wiki-local")
+        self.ds = load_from_disk("./data/wuu-wiki-local")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
@@ -155,11 +155,11 @@ class CantoNLIFineTuner(CantoPreTrainer):
         self.finetune_dataset = None
 
     def preprocess_data(self):
-        nli_data = load_from_disk("./yue-nli-local")
+        nli_data = load_from_disk("./data/yue-nli-local")
 
         def tokenize_function(examples):
             return self.tokenizer(examples["input_text"], return_special_tokens_mask=True, truncation=True,
-                                  padding="max_length", max_length=128)
+                                  padding="max_length", max_length=256)
 
         train, val, test = (
             nli_data["train"],
@@ -177,10 +177,20 @@ class CantoNLIFineTuner(CantoPreTrainer):
 
             return Dataset.from_list([e for s in nested_nli_list for e in s])
 
+        train_set, val_set, test_set = [
+            yue_nli_collator(train).map(tokenize_function, batched=True),
+            yue_nli_collator(val).map(tokenize_function, batched=True),
+            yue_nli_collator(test).map(tokenize_function, batched=True)
+        ]
+
+        print(f"A total of {len(train_set)} training examples,")
+        print(f"{len(val_set)} validation examples,")
+        print(f"{len(test_set)} test examples.")
+
         self.finetune_dataset = {
-            "train": yue_nli_collator(train).map(tokenize_function, batched=True),
-            "validation": yue_nli_collator(val).map(tokenize_function, batched=True),
-            "test": yue_nli_collator(test).map(tokenize_function, batched=True)
+            "train": train_set,
+            "validation": val_set,
+            "test": test_set
         }
 
     def finetune(self):
@@ -193,16 +203,22 @@ class CantoNLIFineTuner(CantoPreTrainer):
         model = BertForSequenceClassification.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"./{self.lang}-nlu",
+            output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
             overwrite_output_dir=True,
             num_train_epochs=3,
+            optim="adamw_torch",
+            learning_rate=2e-5,
             per_device_train_batch_size=16,
+            per_device_eval_batch_size=16,
             save_steps=1000,
             save_total_limit=2,
             logging_steps=100,
             report_to="tensorboard",
             eval_strategy="steps",
             eval_steps=500,
+            load_best_model_at_end=True,
+            metric_for_best_model="loss",
+            greater_is_better=False,
         )
 
         trainer = Trainer(
@@ -213,11 +229,11 @@ class CantoNLIFineTuner(CantoPreTrainer):
         )
 
         trainer.train()
-        trainer.save_model(f"./{self.lang}-nlu")
+        trainer.save_model(f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}")
 
         trainer.compute_metrics = compute_nli_metrics
         metrics = trainer.evaluate(
             eval_dataset=self.finetune_dataset["test"],
             )
-        print(f"Accuracy: {metrics['accuracy']}")
-        print(f"Confusion_matrix: {metrics['confusion_matrix']}")
+        print(f"Accuracy: {metrics['eval_accuracy']}")
+        print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
