@@ -26,20 +26,16 @@ def lexical_similarity(s1: str, s2: str) -> float:
     return intersection / union
 
 
-def get_yue_nli_test_subset(n: int) -> pd.DataFrame:
+def get_subset(ds) -> list:
     """
     Get the n-most lexically dissimilar (anchor-negative similarity minus anchor-positive similarity)
     examples from the test split of the Yue NLI dataset.
-    :param n: Number of examples to return.
-    :return: DataFrame
+    :return: list of examples where the negative sentence is more similar to anchor than positive sentence.
     """
-    if not os.path.exists('data/yue-nli-local'):
-        raise FileNotFoundError("The Yue NLI dataset is not found. Please first run `python download.py --lang=yue`.")
-    ds = load_from_disk('data/yue-nli-local')['test']
 
-    def compute_lexical_similarity(example):
-        positive_similarity = lexical_similarity(example['anchor'], example['positive'])
-        negative_similarity = lexical_similarity(example['anchor'], example['negative'])
+    def compute_lexical_similarity(ex):
+        positive_similarity = lexical_similarity(ex['anchor'], ex['positive'])
+        negative_similarity = lexical_similarity(ex['anchor'], ex['negative'])
         return negative_similarity - positive_similarity
 
     results = []
@@ -52,6 +48,4 @@ def get_yue_nli_test_subset(n: int) -> pd.DataFrame:
             'similarity': similarity
         })
 
-    df = pd.DataFrame(results)
-    df.sort_values(by='similarity', ascending=False, inplace=True)
-    return df[:n]
+    return [r for r in results if r['similarity'] > 0]

@@ -10,6 +10,7 @@ from transformers import (
 import os
 import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix
+from utils import get_subset
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
@@ -150,59 +151,12 @@ def compute_nli_metrics(eval_pred):
 
 
 class CantoNLIFineTuner(CantoPreTrainer):
-    def __init__(self, lang, model_dir):
+    def __init__(self, lang, model_dir, eval_only=False):
         super().__init__(lang, model_dir)
         self.finetune_dataset = None
-
-    def preprocess_data(self):
-        nli_data = load_from_disk("./data/yue-nli-local")
-
-        def tokenize_function(examples):
-            return self.tokenizer(examples["input_text"], return_special_tokens_mask=True, truncation=True,
-                                  padding="max_length", max_length=256)
-
-        train, val, test = (
-            nli_data["train"],
-            nli_data["dev"],
-            nli_data["test"]
-        )
-
-        def yue_nli_collator(split):
-            nested_nli_list = [
-                [
-              {"input_text": f"{s['anchor']} [SEP] {s['positive']}", "label": 0},
-              {"input_text": f"{s['anchor']} [SEP] {s['negative']}", "label": 1}
-              ]
-                               for s in split]
-
-            return Dataset.from_list([e for s in nested_nli_list for e in s])
-
-        train_set, val_set, test_set = [
-            yue_nli_collator(train).map(tokenize_function, batched=True),
-            yue_nli_collator(val).map(tokenize_function, batched=True),
-            yue_nli_collator(test).map(tokenize_function, batched=True)
-        ]
-
-        print(f"A total of {len(train_set)} training examples,")
-        print(f"{len(val_set)} validation examples,")
-        print(f"{len(test_set)} test examples.")
-
-        self.finetune_dataset = {
-            "train": train_set,
-            "validation": val_set,
-            "test": test_set
-        }
-
-    def finetune(self):
-        self.preprocess_data()
-
-        if any({split not in self.finetune_dataset for split in ["train", "validation", "test"]}):
-            raise ValueError(f"'train' and 'validation' splits must be present in finetune_dataset."
-                             f"Found: {self.finetune_dataset.keys()}")
-
-        model = BertForSequenceClassification.from_pretrained(self.model_dir)
-
-        training_args = TrainingArguments(
+        self.preprocess_data(eval_only=eval_only)
+        self.model = BertForSequenceClassification.from_pretrained(self.model_dir)
+        self.training_args = TrainingArguments(
             output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
             overwrite_output_dir=True,
             num_train_epochs=3,
@@ -221,9 +175,71 @@ class CantoNLIFineTuner(CantoPreTrainer):
             greater_is_better=False,
         )
 
+    def preprocess_data(self, eval_only=False):
+        nli_data = load_from_disk("./data/yue-nli-local")
+
+        def tokenize_function(examples):
+            return self.tokenizer(examples["input_text"], return_special_tokens_mask=True, truncation=True,
+                                  padding="max_length", max_length=256)
+
+        def yue_nli_collator(split):
+            nested_nli_list = [
+                [
+              {"input_text": f"{s['anchor']} [SEP] {s['positive']}", "label": 0},
+              {"input_text": f"{s['anchor']} [SEP] {s['negative']}", "label": 1}
+              ]
+                               for s in split]
+
+            return Dataset.from_list([e for s in nested_nli_list for e in s])
+
+        if eval_only:
+            test = get_subset(nli_data["test"])
+            test_set = yue_nli_collator(test).map(tokenize_function, batched=True)
+            print(f"{len(test_set)} test examples.")
+            self.finetune_dataset = {
+                "train": None,
+                "validation": None,
+                "test": test_set
+            }
+        else:
+            train, val, test = (
+                nli_data["train"],
+                nli_data["dev"],
+                get_subset(nli_data["test"])
+            )
+
+            train_set, val_set, test_set = [
+                yue_nli_collator(train).map(tokenize_function, batched=True),
+                yue_nli_collator(val).map(tokenize_function, batched=True),
+                yue_nli_collator(test).map(tokenize_function, batched=True)
+            ]
+
+            print(f"A total of {len(train_set)} training examples,")
+            print(f"{len(val_set)} validation examples,")
+            print(f"{len(test_set)} test examples.")
+
+            self.finetune_dataset = {
+                "train": train_set,
+                "validation": val_set,
+                "test": test_set
+            }
+
+    def eval(self, trainer):
+        trainer.compute_metrics = compute_nli_metrics
+        metrics = trainer.evaluate(
+            eval_dataset=self.finetune_dataset["test"],
+        )
+        print(f"Accuracy: {metrics['eval_accuracy']}")
+        print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
+
+    def finetune(self):
+        if any({split not in self.finetune_dataset for split in ["train", "validation", "test"]}):
+            raise ValueError(f"'train' and 'validation' splits must be present in finetune_dataset."
+                             f"Found: {self.finetune_dataset.keys()}")
+
         trainer = Trainer(
-            model=model,
-            args=training_args,
+            model=self.model,
+            args=self.training_args,
             train_dataset=self.finetune_dataset["train"],
             eval_dataset=self.finetune_dataset["validation"],
         )
@@ -231,9 +247,4 @@ class CantoNLIFineTuner(CantoPreTrainer):
         trainer.train()
         trainer.save_model(f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}")
 
-        trainer.compute_metrics = compute_nli_metrics
-        metrics = trainer.evaluate(
-            eval_dataset=self.finetune_dataset["test"],
-            )
-        print(f"Accuracy: {metrics['eval_accuracy']}")
-        print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
+        self.eval(trainer)

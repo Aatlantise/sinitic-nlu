@@ -1,5 +1,6 @@
 from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner
 from argparse import ArgumentParser
+from transformers import Trainer
 
 def run(args):
     if args.pretrain:
@@ -17,6 +18,19 @@ def run(args):
             model.finetune()
         else:
             print(f"{args.lang} fine-tuning is not supported. Please choose from: yue")
+    if args.eval_only:
+        if args.lang == "yue":
+            model = CantoNLIFineTuner(args.lang, model_dir=args.model_dir, eval_only=True)
+
+            trainer = Trainer(
+                model=model.model,
+                args=model.training_args,
+                eval_dataset=model.finetune_dataset["test"]
+            )
+
+            model.eval(trainer)
+        else:
+            print(f"{args.lang} evaluating is not supported. Please choose from: yue")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -24,5 +38,9 @@ if __name__ == "__main__":
     parser.add_argument("--model_dir", default="./models/bert-base-chinese-local")
     parser.add_argument("--pretrain", action="store_true", default=False)
     parser.add_argument("--finetune", action="store_true", default=False)
+    parser.add_argument("--eval_only", action="store_true", default=False)
     args = parser.parse_args()
+
+    print(args)
+
     run(args)
