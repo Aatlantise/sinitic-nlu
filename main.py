@@ -9,7 +9,8 @@ from transformers import (
 )
 import os
 import numpy as np
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
+from sklearn.model_selection import KFold
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
@@ -140,12 +141,16 @@ def compute_nli_metrics(eval_pred):
 
     acc = accuracy_score(labels, preds)
     cm = confusion_matrix(labels, preds, labels=[0, 1])
+    macro_f1 = f1_score(labels, preds, average='macro')
+    weighted_f1 = f1_score(labels, preds, average='weighted')
 
     return {
         "preds": preds,
         "labels": labels,
         "accuracy": acc,
-        "confusion_matrix": cm.tolist()
+        "confusion_matrix": cm.tolist(),
+        "macro_f1": macro_f1,
+        "weighted_f1": weighted_f1
     }
 
 
@@ -237,3 +242,86 @@ class CantoNLIFineTuner(CantoPreTrainer):
             )
         print(f"Accuracy: {metrics['eval_accuracy']}")
         print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
+
+
+class CantoNLUFineTuner(CantoNLIFineTuner):
+    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
+        super().__init__(lang, model_dir)
+
+    def preprocess_data(self):
+        nlu_data = load_from_disk('./cantonese-nlu-local')['train']
+        k_fold = KFold(n_splits=10, shuffle=True, random_state=42)
+        indices = list(k_fold.split(np.arange(len(nlu_data))))
+
+        def tokenize_function(examples):
+            return self.tokenizer(examples["sentence"], return_special_tokens_mask=True, truncation=True,
+                                  padding="max_length", max_length=256)
+
+        self.finetune_dataset = []
+
+        for fold, (indices_train, indices_test) in enumerate(indices):
+            train_set = nlu_data.select(indices_train)
+            valid_set = nlu_data.select(indices_test)
+
+            train_set = train_set.map(tokenize_function, batched=True)
+            valid_set = valid_set.map(tokenize_function, batched=True)
+
+            self.finetune_dataset.append({
+                "train": train_set,
+                "validation": valid_set
+            })
+
+    def finetune(self):
+        self.preprocess_data()
+
+        model = BertForSequenceClassification.from_pretrained(self.model_dir, num_labels=2)
+
+        training_args = TrainingArguments(
+            output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
+            overwrite_output_dir=True,
+            num_train_epochs=5,
+            optim="adamw_torch",
+            learning_rate=1e-5,
+            per_device_train_batch_size=8,
+            per_device_eval_batch_size=8,
+            logging_steps=50,
+            report_to="tensorboard",
+        )
+
+        cross_validation_results = {
+            'accuracy': [],
+            'confusion_matrix': [],
+            'macro_f1': [],
+            'weighted_f1': [],
+        }
+
+        for fold, dataset in enumerate(self.finetune_dataset):
+            print(f"Training on fold {fold + 1}/{len(self.finetune_dataset)}")
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                train_dataset=dataset["train"],
+                eval_dataset=dataset["validation"],
+            )
+
+            trainer.train()
+            trainer.save_model(f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}-fold-{fold}")
+
+            trainer.compute_metrics = compute_nli_metrics
+            metrics = trainer.evaluate(
+                eval_dataset=dataset["validation"],
+            )
+
+            cross_validation_results['accuracy'].append(metrics['eval_accuracy'])
+            cross_validation_results['confusion_matrix'].append(metrics['eval_confusion_matrix'])
+            cross_validation_results['macro_f1'].append(metrics['eval_macro_f1'])
+            cross_validation_results['weighted_f1'].append(metrics['eval_weighted_f1'])
+            print(f"Fold {fold + 1} - Accuracy: {metrics['eval_accuracy']}")
+            print(f"Fold {fold + 1} - Confusion Matrix: {metrics['eval_confusion_matrix']}")
+            print(f"Fold {fold + 1} - Macro F1: {metrics['eval_macro_f1']}")
+            print(f"Fold {fold + 1} - Weighted F1: {metrics['eval_weighted_f1']}")
+
+        print("Cross-validation results:")
+        print(f"Average Accuracy: {np.mean(cross_validation_results['accuracy'])}")
+        print(f"Average Macro F1: {np.mean(cross_validation_results['macro_f1'])}")
+        print(f"Average Weighted F1: {np.mean(cross_validation_results['weighted_f1'])}")
