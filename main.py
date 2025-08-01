@@ -5,12 +5,15 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
+    DataCollatorForTokenClassification,
     EarlyStoppingCallback, BertForSequenceClassification,
+    BertForTokenClassification
 )
 import os
 import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 from sklearn.model_selection import KFold
+import evaluate
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
@@ -249,13 +252,30 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
         super().__init__(lang, model_dir)
 
     def preprocess_data(self):
-        nlu_data = load_from_disk('./cantonese-nlu-local')['train']
+        nlu_data = load_from_disk('./data/nlptea_dataset')['train']
         k_fold = KFold(n_splits=10, shuffle=True, random_state=42)
         indices = list(k_fold.split(np.arange(len(nlu_data))))
 
-        def tokenize_function(examples):
-            return self.tokenizer(examples["sentence"], return_special_tokens_mask=True, truncation=True,
-                                  padding="max_length", max_length=256)
+        def tokenize_and_align_labels(examples):
+            tokenized_inputs = self.tokenizer(examples["tokens"], truncation=True, is_split_into_words=True)
+
+            labels = []
+            for i, label in enumerate(examples[f"cantonese_tags"]):
+                word_ids = tokenized_inputs.word_ids(batch_index=i)  # Map tokens to their respective word.
+                previous_word_idx = None
+                label_ids = []
+                for word_idx in word_ids:  # Set the special tokens to -100.
+                    if word_idx is None:
+                        label_ids.append(-100)
+                    elif word_idx != previous_word_idx:  # Only label the first token of a given word.
+                        label_ids.append(label[word_idx])
+                    else:
+                        label_ids.append(-100)
+                    previous_word_idx = word_idx
+                labels.append(label_ids)
+
+            tokenized_inputs["labels"] = labels
+            return tokenized_inputs
 
         self.finetune_dataset = []
 
@@ -263,8 +283,8 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
             train_set = nlu_data.select(indices_train)
             valid_set = nlu_data.select(indices_test)
 
-            train_set = train_set.map(tokenize_function, batched=True)
-            valid_set = valid_set.map(tokenize_function, batched=True)
+            train_set = train_set.map(tokenize_and_align_labels, batched=True)
+            valid_set = valid_set.map(tokenize_and_align_labels, batched=True)
 
             self.finetune_dataset.append({
                 "train": train_set,
@@ -274,12 +294,52 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
     def finetune(self):
         self.preprocess_data()
 
-        model = BertForSequenceClassification.from_pretrained(self.model_dir, num_labels=2)
+        data_collator = DataCollatorForTokenClassification(tokenizer=self.tokenizer)
+
+        seqeval = evaluate.load("seqeval")
+        label_list = ['Chinese', 'Cantonese']
+        id2label = {
+            0: 'Chinese',
+            1: 'Cantonese'
+        }
+        label2id = {
+            'Chinese': 0,
+            'Cantonese': 1
+        }
+
+        def compute_nlu_metrics(p):
+            predictions, labels = p
+            predictions = np.argmax(predictions, axis=2)
+
+            true_predictions = [
+                [label_list[p] for (p, l) in zip(prediction, label) if l != -100]
+                for prediction, label in zip(predictions, labels)
+            ]
+            true_labels = [
+                [label_list[l] for (p, l) in zip(prediction, label) if l != -100]
+                for prediction, label in zip(predictions, labels)
+            ]
+
+            results = seqeval.compute(predictions=true_predictions, references=true_labels)
+
+            return {
+                "precision": results["overall_precision"],
+                "recall": results["overall_recall"],
+                "f1": results["overall_f1"],
+                "accuracy": results["overall_accuracy"],
+            }
+
+        model = BertForTokenClassification.from_pretrained(
+            self.model_dir,
+            num_labels=2,
+            id2label=id2label,
+            label2id=label2id
+        )
 
         training_args = TrainingArguments(
             output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
             overwrite_output_dir=True,
-            num_train_epochs=5,
+            num_train_epochs=3,
             optim="adamw_torch",
             learning_rate=1e-5,
             per_device_train_batch_size=8,
@@ -289,10 +349,10 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
         )
 
         cross_validation_results = {
+            'precision': [],
+            'recall': [],
+            'f1': [],
             'accuracy': [],
-            'confusion_matrix': [],
-            'macro_f1': [],
-            'weighted_f1': [],
         }
 
         for fold, dataset in enumerate(self.finetune_dataset):
@@ -302,26 +362,30 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
                 args=training_args,
                 train_dataset=dataset["train"],
                 eval_dataset=dataset["validation"],
+                processing_class=self.tokenizer,
+                data_collator=data_collator,
+                compute_metrics=compute_nlu_metrics,
             )
 
             trainer.train()
-            trainer.save_model(f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}-fold-{fold}")
+            # trainer.save_model(f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}-fold-{fold}")
 
-            trainer.compute_metrics = compute_nli_metrics
             metrics = trainer.evaluate(
                 eval_dataset=dataset["validation"],
             )
+            print(metrics)
 
             cross_validation_results['accuracy'].append(metrics['eval_accuracy'])
-            cross_validation_results['confusion_matrix'].append(metrics['eval_confusion_matrix'])
-            cross_validation_results['macro_f1'].append(metrics['eval_macro_f1'])
-            cross_validation_results['weighted_f1'].append(metrics['eval_weighted_f1'])
+            cross_validation_results['precision'].append(metrics['eval_precision'])
+            cross_validation_results['recall'].append(metrics['eval_recall'])
+            cross_validation_results['f1'].append(metrics['eval_f1'])
             print(f"Fold {fold + 1} - Accuracy: {metrics['eval_accuracy']}")
-            print(f"Fold {fold + 1} - Confusion Matrix: {metrics['eval_confusion_matrix']}")
-            print(f"Fold {fold + 1} - Macro F1: {metrics['eval_macro_f1']}")
-            print(f"Fold {fold + 1} - Weighted F1: {metrics['eval_weighted_f1']}")
+            print(f"Fold {fold + 1} - Precision: {metrics['eval_precision']}")
+            print(f"Fold {fold + 1} - Recall: {metrics['eval_recall']}")
+            print(f"Fold {fold + 1} - F1: {metrics['eval_f1']}")
 
         print("Cross-validation results:")
         print(f"Average Accuracy: {np.mean(cross_validation_results['accuracy'])}")
-        print(f"Average Macro F1: {np.mean(cross_validation_results['macro_f1'])}")
-        print(f"Average Weighted F1: {np.mean(cross_validation_results['weighted_f1'])}")
+        print(f"Average Precision: {np.mean(cross_validation_results['precision'])}")
+        print(f"Average Recall: {np.mean(cross_validation_results['recall'])}")
+        print(f"Average F1: {np.mean(cross_validation_results['f1'])}")
