@@ -5,11 +5,13 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-    EarlyStoppingCallback, BertForSequenceClassification,
+    EarlyStoppingCallback,
+    BertForSequenceClassification,
+    BertForTokenClassification,
 )
 import os
 import numpy as np
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
@@ -41,6 +43,7 @@ class SiniticPreTrainer:
         training_args = TrainingArguments(
             output_dir=f"./{self.lang}-pretrain",
             overwrite_output_dir=True,
+            learning_rate=2e-5,
             num_train_epochs=10,
             per_device_train_batch_size=16,
             save_steps=1000,
@@ -60,7 +63,7 @@ class SiniticPreTrainer:
             train_dataset=self.lm_dataset["train"],
             eval_dataset=self.lm_dataset["validation"],
             data_collator=data_collator,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            # callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
 
         trainer.train()
@@ -237,3 +240,124 @@ class CantoNLIFineTuner(CantoPreTrainer):
             )
         print(f"Accuracy: {metrics['eval_accuracy']}")
         print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
+
+
+class CantoPOSFineTuner(CantoPreTrainer):
+    def __init__(self, lang, model_dir):
+        super().__init__(lang, model_dir)
+        self.finetune_dataset = None
+        self.tokenizer = BertTokenizerFast.from_pretrained(model_dir)
+        self.pos_tags = ['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM',
+                    'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X']
+        self.tag2id = {tag: i for i, tag in enumerate(self.pos_tags)}
+        self.id2tag = {i: tag for tag, i in self.tag2id.items()}
+
+    def preprocess_data(self):
+        # Load raw dataset (adjust this path to your actual source)
+        raw_data = load_from_disk("./data/yue-pos")  # Should return DatasetDict
+        # Expected format: {"train": [{"sentence": [...], "labels": [...]}], ...}
+
+        def align_labels_with_tokens(examples):
+            tokenized = self.tokenizer(
+                examples["sentence"],
+                is_split_into_words=True,
+                truncation=True,
+                padding="max_length",
+                max_length=128
+            )
+
+            labels = []
+            for i, word_ids in enumerate(tokenized.word_ids(batch_index=i) for i in range(len(examples["sentence"]))):
+                word_labels = examples["labels"][i]
+                label_ids = []
+                previous_word_idx = None
+                for word_idx in word_ids:
+                    if word_idx is None:
+                        label_ids.append(-100)
+                    elif word_idx != previous_word_idx:
+                        label_ids.append(self.tag2id.get(word_labels[word_idx], -100))
+                        previous_word_idx = word_idx
+                    else:
+                        label_ids.append(-100)  # Mask subsequent subwords
+                labels.append(label_ids)
+
+            tokenized["labels"] = labels
+            return tokenized
+
+        # Tokenize and align labels
+        tokenized_data = raw_data.map(align_labels_with_tokens, batched=True)
+        self.finetune_dataset = {
+            "train": tokenized_data["train"],
+            "test": tokenized_data.get("test", tokenized_data["train"])
+        }
+
+    def finetune(self):
+        self.preprocess_data()
+
+        if any(split not in self.finetune_dataset for split in ["train", "test"]):
+            raise ValueError(f"'train' and 'validation' splits must be present in finetune_dataset."
+                             f"Found: {self.finetune_dataset.keys()}")
+
+        model = BertForTokenClassification.from_pretrained(
+            self.model_dir,
+            num_labels=len(self.tag2id),
+            id2label=self.id2tag,
+            label2id=self.tag2id
+        )
+
+        training_args = TrainingArguments(
+            output_dir=f"./models/{self.lang}-pos-{self.model_dir.strip('/').split('/')[-1]}",
+            overwrite_output_dir=True,
+            num_train_epochs=3,
+            learning_rate=2e-5,
+            per_device_train_batch_size=32,
+            per_device_eval_batch_size=32,
+            eval_strategy="epoch",
+            save_strategy="epoch",
+            logging_dir="./logs",
+            logging_steps=100,
+            report_to="tensorboard",
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_macro_f1",
+            greater_is_better=True,
+        )
+
+        def compute_metrics(pred):
+            predictions, labels = pred
+            predictions = np.argmax(predictions, axis=-1)
+
+            true_labels = [
+                [self.id2tag[l] for (p, l) in zip(pred_row, label_row) if l != -100]
+                for pred_row, label_row in zip(predictions, labels)
+            ]
+            true_preds = [
+                [self.id2tag[p] for (p, l) in zip(pred_row, label_row) if l != -100]
+                for pred_row, label_row in zip(predictions, labels)
+            ]
+
+            # Simple accuracy and F1 (could replace with seqeval)
+            flat_preds = [p for row in true_preds for p in row]
+            flat_labels = [l for row in true_labels for l in row]
+
+            return {
+                "accuracy": accuracy_score(flat_labels, flat_preds),
+                "macro_f1": f1_score(flat_labels, flat_preds, average="macro"),
+                "micro_f1": f1_score(flat_labels, flat_preds, average="micro"),
+            }
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=self.finetune_dataset["train"],
+            eval_dataset=self.finetune_dataset["test"],
+            tokenizer=self.tokenizer,
+            compute_metrics=compute_metrics,
+        )
+
+        trainer.train()
+        trainer.save_model(f"./models/{self.lang}-pos-{self.model_dir.strip('/').split('/')[-1]}")
+
+        metrics = trainer.evaluate(self.finetune_dataset["test"])
+        print(f"Final test accuracy: {metrics['eval_accuracy']}")
+        print(f"Final test macro F1: {metrics['eval_macro_f1']}")
+        print(f"Final test macro F1: {metrics['eval_micro_f1']}")
