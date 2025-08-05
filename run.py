@@ -1,4 +1,4 @@
-from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner
+from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner, CantoPOSFineTuner
 from argparse import ArgumentParser
 from transformers import Trainer
 
@@ -14,8 +14,14 @@ def run(args):
             print(f"{args.lang} pre-training is not supported. Please choose from: yue, wuu")
     if args.finetune:
         if args.lang == "yue":
-            model = CantoNLIFineTuner(args.lang, model_dir=args.model_dir)
-            model.finetune()
+            if args.task == "nli":
+                model = CantoNLIFineTuner(args.lang, model_dir=args.model_dir)
+                model.finetune()
+            if args.task == "pos":
+                model = CantoPOSFineTuner(args.lang, model_dir=args.model_dir)
+                model.finetune()
+            else:
+                print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli")
         else:
             print(f"{args.lang} fine-tuning is not supported. Please choose from: yue")
     if args.eval_only:
@@ -39,8 +45,10 @@ if __name__ == "__main__":
     parser.add_argument("--pretrain", action="store_true", default=False)
     parser.add_argument("--finetune", action="store_true", default=False)
     parser.add_argument("--eval_only", action="store_true", default=False)
+    parser.add_argument("--task", type=str, default="")
     args = parser.parse_args()
 
-    print(args)
+    if args.task:
+        args.finetune = True
 
     run(args)
