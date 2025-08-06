@@ -25,7 +25,30 @@ class SiniticPreTrainer:
         self.lm_dataset = None
 
     def preprocess_data(self):
-        pass
+        self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
+
+        def tokenize(example):
+            return self.tokenizer(example["text"], return_special_tokens_mask=True, truncation=False)
+
+        tokenized_ds = self.ds.map(tokenize, batched=True, remove_columns=["text", "title", "id", "url"])
+
+        # For example, into 512-token chunks
+        block_size = 512
+
+        def group_texts(examples):
+            concatenated = {k: sum(examples[k], []) for k in examples.keys()}
+            total_length = (len(concatenated["input_ids"]) // block_size) * block_size
+            result = {
+                k: [t[i:i + block_size] for i in range(0, total_length, block_size)]
+                for k, t in concatenated.items()
+            }
+            return result
+
+        train_dataset, validation_dataset = tokenized_ds["train"].train_test_split(test_size=0.1).values()
+        self.lm_dataset = {
+            "train": train_dataset.map(group_texts, batched=True),
+            "validation": validation_dataset.map(group_texts, batched=True)
+        }
 
     def train(self):
         self.preprocess_data()
@@ -74,7 +97,7 @@ class SiniticPreTrainer:
 class CantoPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local"):
         super().__init__(lang, model_dir)
-        if not os.path.exists("./data/yue-wiki-local"):
+        if not os.path.exists("./data/yue-wiki-full-local"):
             raise FileNotFoundError(
                 "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
             )
@@ -83,10 +106,10 @@ class CantoPreTrainer(SiniticPreTrainer):
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./data/yue-wiki-local")
+        self.ds = load_from_disk("./data/yue-wiki-full-local")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
-    def preprocess_data(self):
+    def preprocess_sent_data(self):
         def tokenize_function(examples):
             return self.tokenizer(examples["text"], return_special_tokens_mask=True, truncation=True,
                                   padding="max_length", max_length=128)
@@ -111,32 +134,6 @@ class WuPreTrainer(SiniticPreTrainer):
             )
         self.ds = load_from_disk("./data/wuu-wiki-local")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
-
-    def preprocess_data(self):
-        self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
-
-        def tokenize(example):
-            return self.tokenizer(example["text"], return_special_tokens_mask=True, truncation=False)
-
-        tokenized_ds = self.ds.map(tokenize, batched=True, remove_columns=["text", "title", "id", "url"])
-
-        # For example, into 512-token chunks
-        block_size = 512
-
-        def group_texts(examples):
-            concatenated = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = (len(concatenated["input_ids"]) // block_size) * block_size
-            result = {
-                k: [t[i:i + block_size] for i in range(0, total_length, block_size)]
-                for k, t in concatenated.items()
-            }
-            return result
-
-        train_dataset, validation_dataset = tokenized_ds["train"].train_test_split(test_size=0.1).values()
-        self.lm_dataset = {
-            "train": train_dataset.map(group_texts, batched=True),
-            "validation": validation_dataset.map(group_texts, batched=True)
-        }
 
 
 def compute_nli_metrics(eval_pred):
