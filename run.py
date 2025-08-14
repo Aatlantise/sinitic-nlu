@@ -1,4 +1,4 @@
-from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner, CantoPOSFineTuner
+from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner, CantoPOSFineTuner, CantoDEPSFineTuner
 from argparse import ArgumentParser
 from transformers import Trainer
 
@@ -17,8 +17,11 @@ def run(args):
             if args.task == "nli":
                 model = CantoNLIFineTuner(args.lang, model_dir=args.model_dir)
                 model.finetune()
-            if args.task == "pos":
+            elif args.task == "pos":
                 model = CantoPOSFineTuner(args.lang, model_dir=args.model_dir)
+                model.finetune()
+            elif args.task == "deps":
+                model = CantoDEPSFineTuner(args.lang, model_dir=args.model_dir)
                 model.finetune()
             else:
                 print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli")

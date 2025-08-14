@@ -52,9 +52,14 @@ def get_subset(ds) -> list:
 
 def parse_conllu(file_path):
     sentences = []
-    labels = []
+    pos_labels = []
+    dep_labels = []
+    head_labels = []
+
     current_sentence = []
-    current_labels = []
+    current_pos = []
+    current_dep = []
+    current_head = []
 
     with open(file_path, 'r', encoding='utf-8') as f:
         for line in f:
@@ -65,28 +70,36 @@ def parse_conllu(file_path):
                 if not line:
                     if current_sentence:  # end of sentence
                         sentences.append(current_sentence)
-                        labels.append(current_labels)
+                        pos_labels.append(current_pos)
+                        dep_labels.append(current_dep)
+                        head_labels.append(current_head)
                         current_sentence = []
-                        current_labels = []
+                        current_pos = []
+                        current_dep = []
+                        current_head = []
                 continue
 
             parts = line.split('\t')
             if len(parts) != 10:
                 continue  # malformed line
 
-            token, upos = parts[1], parts[3]
+            token, upos, head, dep = parts[1], parts[3], int(parts[6]), parts[7]
             current_sentence.append(token)
-            current_labels.append(upos)
+            current_pos.append(upos)
+            current_dep.append(dep)
+            current_head.append(head)
 
         # Catch any sentence that wasn’t followed by a blank line
         if current_sentence:
             sentences.append(current_sentence)
-            labels.append(current_labels)
+            pos_labels.append(current_pos)
+            dep_labels.append(current_dep)
+            head_labels.append(current_head)
 
-    return sentences, labels
+    return sentences, pos_labels, dep_labels, head_labels
 
 
-def build_dataset_dict(sentences, labels, train_ratio=0.9):
+def build_pos_dataset_dict(sentences, labels, train_ratio=0.9):
     total = len(sentences)
     train_end = int(total * train_ratio)
 
@@ -106,12 +119,40 @@ def build_dataset_dict(sentences, labels, train_ratio=0.9):
         for split, data in dataset_splits.items()
     })
 
+def build_deps_dataset_dict(sentences, dep, heads, train_ratio=0.9):
+    total = len(sentences)
+    train_end = int(total * train_ratio)
 
-def conllu_to_pos_dataset():
+    dataset_splits = {
+        "train": {
+            "sentence": sentences[:train_end],
+            "deps": dep[:train_end],
+            "heads": heads[:train_end],
+        },
+        "test": {
+            "sentence": sentences[train_end:],
+            "deps": dep[train_end:],
+            "heads": heads[train_end:]
+        }
+    }
+
+    return DatasetDict({
+        split: Dataset.from_dict(data)
+        for split, data in dataset_splits.items()
+    })
+
+
+def conllu_to_dataset():
     # Usage
     conllu_path = "./data/yue_hk-ud-test.conllu"  # Adjust this path
-    sents, tags = parse_conllu(conllu_path)
-    dataset = build_dataset_dict(sents, tags)
+    sents, pos, dep, head = parse_conllu(conllu_path)
+    pos_dataset = build_pos_dataset_dict(sents, pos)
+    deps_dataset = build_deps_dataset_dict(sents, dep, head)
 
     # Optionally save for reuse
-    dataset.save_to_disk("./data/yue-pos")
+    pos_dataset.save_to_disk("./data/yue-pos")
+    deps_dataset.save_to_disk("./data/yue-deps")
+
+
+if __name__ == '__main__':
+    conllu_to_dataset()
