@@ -10,6 +10,7 @@ from transformers import (
     BertForTokenClassification,
     BertPreTrainedModel,
     BertModel,
+    BertConfig,
 )
 from transformers.modeling_outputs import TokenClassifierOutput
 import os
@@ -20,13 +21,17 @@ import torch.nn as nn
 
 
 class SiniticPreTrainer:
-    def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
+    def __init__(self, lang="", model_dir="./models/bert-base-chinese-local", scratch=False):
         self.ds = None
         self.tokenizer = None
         self.lang = lang
         self.model_dir = model_dir
         self.tokenized_ds = None
         self.lm_dataset = None
+        self.from_scratch = scratch
+
+        if scratch:
+            self.model_dir = "./models/cantonese_tokenizer/"
 
     def preprocess_data(self):
         self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
@@ -67,10 +72,26 @@ class SiniticPreTrainer:
             mlm_probability=0.15
         )
 
-        model = BertForMaskedLM.from_pretrained(self.model_dir)
+        config = BertConfig(
+            vocab_size=self.tokenizer.vocab_size,
+            hidden_size=768,
+            num_hidden_layers=12,
+            num_attention_heads=12,
+            intermediate_size=3072,
+            max_position_embeddings=514,  # 512 + 2
+            type_vocab_size=2,
+            pad_token_id=self.tokenizer.pad_token_id,
+)
+
+        if self.from_scratch:
+            model = BertForMaskedLM(config=config)
+        else:
+            model = BertForMaskedLM.from_pretrained(self.model_dir)
+
+        output_dir_name = f"./{self.lang}-scratch" if self.from_scratch else "./{self.lang}-transfer"
 
         training_args = TrainingArguments(
-            output_dir=f"./{self.lang}-pretrain",
+            output_dir=output_dir_name,
             overwrite_output_dir=True,
             learning_rate=2e-5,
             num_train_epochs=10,
@@ -96,11 +117,11 @@ class SiniticPreTrainer:
         )
 
         trainer.train()
-        trainer.save_model(f"./{self.lang}-pretrain")
+        trainer.save_model(output_dir_name)
 
 class CantoPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local"):
-        super().__init__(lang, model_dir)
+    def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local", scratch=False):
+        super().__init__(lang, model_dir, scratch)
         if not os.path.exists("./data/yue-wiki-full-local"):
             raise FileNotFoundError(
                 "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."

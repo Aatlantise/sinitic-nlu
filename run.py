@@ -5,7 +5,10 @@ from transformers import Trainer
 def run(args):
     if args.pretrain:
         if args.lang == "yue":
-            model = CantoPreTrainer(model_dir=args.model_dir)
+            if args.scratch:
+                model = CantoPreTrainer(model_dir=args.model_dir, scratch=True)
+            else:
+                model = CantoPreTrainer(model_dir=args.model_dir)
             model.train()
         elif args.lang == "wuu":
             model = WuPreTrainer(model_dir=args.model_dir)
@@ -46,12 +49,19 @@ if __name__ == "__main__":
     parser.add_argument("--lang", default="yue")
     parser.add_argument("--model_dir", default="./models/bert-base-chinese-local")
     parser.add_argument("--pretrain", action="store_true", default=False)
+    parser.add_argument("--scratch", action="store_true", default=False)
     parser.add_argument("--finetune", action="store_true", default=False)
     parser.add_argument("--eval_only", action="store_true", default=False)
     parser.add_argument("--task", type=str, default="")
     args = parser.parse_args()
 
+    """
+    Add your custom arguments for IDE tests here
+    """
+
     if args.task:
         args.finetune = True
+    if args.scratch:
+        args.pretrain = True
 
     run(args)

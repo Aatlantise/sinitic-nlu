@@ -3,6 +3,17 @@ from collections import Counter
 from tqdm import tqdm
 import pandas as pd
 import os
+import torch
+from pathlib import Path
+from tokenizers import SentencePieceUnigramTokenizer
+from transformers import (
+    PreTrainedTokenizerFast,
+    BertConfig,
+    BertForMaskedLM,
+    DataCollatorForLanguageModeling,
+    Trainer,
+    TrainingArguments,
+)
 
 
 def lexical_similarity(s1: str, s2: str) -> float:
@@ -153,6 +164,40 @@ def conllu_to_dataset():
     pos_dataset.save_to_disk("./data/yue-pos")
     deps_dataset.save_to_disk("./data/yue-deps")
 
+def train_canto_tokenizer():
+    dataset = load_from_disk("./data/yue-wiki-full-local")
+    tokenizer_dir = Path("./models/cantonese_tokenizer")
+    tokenizer_dir.mkdir(parents=True, exist_ok=True)
+
+    if not (tokenizer_dir / "tokenizer.json").exists():
+        print("Training tokenizer...")
+        # Save all text to a temporary file for SP training
+        with open("cantonese_wiki_corpus.txt", "w", encoding="utf-8") as f:
+            for example in dataset["train"]:
+                if example["text"] is not None:
+                    f.write(example["text"].replace("\n", " ") + "\n")
+
+        sp_tokenizer = SentencePieceUnigramTokenizer(
+            # unk_token="[UNK]"
+        )
+        sp_tokenizer.train(
+            files=["cantonese_wiki_corpus.txt"],
+            vocab_size=32000,
+            special_tokens=["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
+            show_progress=True,
+        )
+        sp_tokenizer.save(str(tokenizer_dir / "tokenizer.json"))
+
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_file=str(tokenizer_dir / "tokenizer.json"),
+        unk_token="[UNK]",
+        pad_token="[PAD]",
+        cls_token="[CLS]",
+        sep_token="[SEP]",
+        mask_token="[MASK]",
+    )
+    tokenizer.model_max_length = 512
+    tokenizer.save_pretrained(tokenizer_dir)
 
 if __name__ == '__main__':
-    conllu_to_dataset()
+    train_canto_tokenizer()
