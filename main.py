@@ -1,4 +1,4 @@
-from datasets import load_from_disk, Dataset
+from datasets import load_from_disk, Dataset, load_dataset
 from transformers import (
     BertForMaskedLM,
     BertTokenizerFast,
@@ -11,8 +11,8 @@ from transformers import (
 )
 import os
 import numpy as np
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-from sklearn.model_selection import KFold
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support
+from sklearn.model_selection import KFold, train_test_split
 import evaluate
 
 class SiniticPreTrainer:
@@ -148,8 +148,6 @@ def compute_nli_metrics(eval_pred):
     weighted_f1 = f1_score(labels, preds, average='weighted')
 
     return {
-        "preds": preds,
-        "labels": labels,
         "accuracy": acc,
         "confusion_matrix": cm.tolist(),
         "macro_f1": macro_f1,
@@ -247,7 +245,7 @@ class CantoNLIFineTuner(CantoPreTrainer):
         print(f"Confusion_matrix: {metrics['eval_confusion_matrix']}")
 
 
-class CantoNLUFineTuner(CantoNLIFineTuner):
+class CantoTokenClassificationFineTuner(CantoNLIFineTuner):
     def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
         super().__init__(lang, model_dir)
 
@@ -321,20 +319,18 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
             ]
 
             results = seqeval.compute(predictions=true_predictions, references=true_labels)
+            _, _, f1_scores, _ = precision_recall_fscore_support(
+                [l for sublist in true_labels for l in sublist],
+                [p for sublist in true_predictions for p in sublist],
+                labels=["Cantonese"]
+            )
+            f1_positive = f1_scores[0]
 
             return {
-                "precision": results["overall_precision"],
-                "recall": results["overall_recall"],
+                "f1_positive": f1_positive,
                 "f1": results["overall_f1"],
                 "accuracy": results["overall_accuracy"],
             }
-
-        model = BertForTokenClassification.from_pretrained(
-            self.model_dir,
-            num_labels=2,
-            id2label=id2label,
-            label2id=label2id
-        )
 
         training_args = TrainingArguments(
             output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
@@ -349,14 +345,20 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
         )
 
         cross_validation_results = {
-            'precision': [],
-            'recall': [],
+            'f1_positive': [],
             'f1': [],
             'accuracy': [],
         }
 
         for fold, dataset in enumerate(self.finetune_dataset):
             print(f"Training on fold {fold + 1}/{len(self.finetune_dataset)}")
+            model = BertForTokenClassification.from_pretrained(
+                self.model_dir,
+                num_labels=2,
+                id2label=id2label,
+                label2id=label2id
+            )
+
             trainer = Trainer(
                 model=model,
                 args=training_args,
@@ -376,16 +378,117 @@ class CantoNLUFineTuner(CantoNLIFineTuner):
             print(metrics)
 
             cross_validation_results['accuracy'].append(metrics['eval_accuracy'])
-            cross_validation_results['precision'].append(metrics['eval_precision'])
-            cross_validation_results['recall'].append(metrics['eval_recall'])
+            cross_validation_results['f1_positive'].append(metrics['eval_f1_positive'])
             cross_validation_results['f1'].append(metrics['eval_f1'])
             print(f"Fold {fold + 1} - Accuracy: {metrics['eval_accuracy']}")
-            print(f"Fold {fold + 1} - Precision: {metrics['eval_precision']}")
-            print(f"Fold {fold + 1} - Recall: {metrics['eval_recall']}")
             print(f"Fold {fold + 1} - F1: {metrics['eval_f1']}")
+            print(f"Fold {fold + 1} - F1 Positive: {metrics['eval_f1_positive']}")
 
         print("Cross-validation results:")
         print(f"Average Accuracy: {np.mean(cross_validation_results['accuracy'])}")
-        print(f"Average Precision: {np.mean(cross_validation_results['precision'])}")
-        print(f"Average Recall: {np.mean(cross_validation_results['recall'])}")
         print(f"Average F1: {np.mean(cross_validation_results['f1'])}")
+        print(f"Average F1 Positive: {np.mean(cross_validation_results['f1_positive'])}")
+
+class CantoAcceptabilityFineTuner(CantoNLIFineTuner):
+    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
+        super().__init__(lang, model_dir)
+
+    def preprocess_data(self):
+        data = load_from_disk('data/acceptability-dataset-2')
+        data = data.shuffle(seed=42)
+
+        def tokenize(example):
+            return self.tokenizer(example["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=128)
+
+        self.finetune_dataset = []
+        train_set, temp_set = data.train_test_split(test_size=0.1, seed=42).values()
+        valid_set, test_set = temp_set.train_test_split(test_size=0.5, seed=42).values()
+
+        train_set = train_set.map(tokenize, batched=True, remove_columns=["text"])
+        valid_set = valid_set.map(tokenize, batched=True, remove_columns=["text"])
+        test_set = test_set.map(tokenize, batched=True, remove_columns=["text"])
+
+        self.finetune_dataset = {
+            "train": train_set,
+            "validation": valid_set,
+            "test": test_set
+        }
+
+    def finetune(self):
+        self.preprocess_data()
+        model = BertForSequenceClassification.from_pretrained(
+            self.model_dir,
+            num_labels=3,
+            id2label={0: "unacceptable", 1: "acceptable", 2: "mix"},
+            label2id={"unacceptable": 0, "acceptable": 1, "mix": 2}
+        )
+
+        def compute_metrics(eval_pred):
+            logits, labels = eval_pred
+            preds = np.argmax(logits, axis=1)
+
+            acc = accuracy_score(labels, preds)
+            cm = confusion_matrix(labels, preds, labels=[0, 1, 2])
+            macro_f1 = f1_score(labels, preds, average='macro')
+            weighted_f1 = f1_score(labels, preds, average='weighted')
+
+            # Get per-class precision, recall, f1
+            _, _, f1s, _ = precision_recall_fscore_support(labels, preds, labels=[0, 1])
+            f1_positive = f1s[1]  # label=1
+
+            return {
+                "accuracy": acc,
+                "confusion_matrix": cm.tolist(),
+                "macro_f1": macro_f1,
+                "weighted_f1": weighted_f1,
+                # "f1_positive": f1_positive  # new key
+            }
+
+        for param in model.bert.parameters():
+            param.requires_grad = False
+        for param in model.bert.encoder.layer[-2:].parameters():
+            param.requires_grad = True
+        for param in model.bert.pooler.parameters():
+            param.requires_grad = True
+        for param in model.classifier.parameters():
+            param.requires_grad = True
+        for name, param in model.named_parameters():
+            print(name, param.requires_grad)
+
+        training_args = TrainingArguments(
+            output_dir=f"./models/{self.lang}-acceptability2-{[f for f in self.model_dir.split('/') if f][-1]}",
+            overwrite_output_dir=True,
+            num_train_epochs=3,
+            optim="adamw_torch",
+            learning_rate=1e-5,
+            per_device_train_batch_size=16,
+            per_device_eval_batch_size=16,
+            logging_steps=20,
+            report_to="tensorboard",
+            eval_strategy="steps",
+            eval_steps=100,
+            load_best_model_at_end=True,
+            # metric_for_best_model="eval_f1_positive",
+            metric_for_best_model="eval_macro_f1",
+            greater_is_better=True,
+            save_steps=1000,
+        )
+        seqeval = evaluate.load("seqeval")
+
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=self.finetune_dataset["train"],
+            eval_dataset=self.finetune_dataset["validation"],
+            compute_metrics=compute_metrics,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=5)],
+        )
+
+        trainer.train()
+
+        metrics = trainer.evaluate(
+            eval_dataset=self.finetune_dataset["test"],
+        )
+        print(f"Accuracy: {metrics['eval_accuracy']}")
+        print(f"Macro F1: {metrics['eval_macro_f1']}")
+        # print(f"Positive F1: {metrics['eval_f1_positive']}")

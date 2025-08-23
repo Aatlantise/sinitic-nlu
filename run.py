@@ -1,4 +1,4 @@
-from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner, CantoNLUFineTuner
+from main import WuPreTrainer, CantoPreTrainer, CantoNLIFineTuner, CantoTokenClassificationFineTuner, CantoAcceptabilityFineTuner
 from argparse import ArgumentParser
 
 def run(args):
@@ -13,7 +13,7 @@ def run(args):
             print(f"{args.lang} pre-training is not supported. Please choose from: yue, wuu")
     if args.finetune:
         if args.lang == "yue":
-            model = CantoNLUFineTuner(args.lang, model_dir=args.model_dir)
+            model = CantoAcceptabilityFineTuner(args.lang, model_dir=args.model_dir)
             model.finetune()
         else:
             print(f"{args.lang} fine-tuning is not supported. Please choose from: yue")
