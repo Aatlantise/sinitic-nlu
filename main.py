@@ -43,7 +43,7 @@ class SiniticPreTrainer:
         model = BertForMaskedLM.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain3",
+            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain",
             overwrite_output_dir=True,
             num_train_epochs=1,
             max_steps=200000,
@@ -92,11 +92,6 @@ class CantoPreTrainer(SiniticPreTrainer):
             )
         self.ds = load_from_disk("./data/cantonese_sentences")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
-#        tokenizer_vocab_size = len(self.tokenizer)
-#        model_vocab_size = BertForMaskedLM.from_pretrained(self.model_dir).config.vocab_size
-
-#        print(f"🧐 Tokenizer vocabulary size: {tokenizer_vocab_size}")
-#        print(f"🤖 Model's expected vocabulary size: {model_vocab_size}")
 
     def preprocess_data(self):
         def tokenize_function(examples):
