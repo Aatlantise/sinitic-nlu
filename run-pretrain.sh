@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --gpus-per-node=a100
-#SBATCH --mem=32G
-#SBATCH --time=24:00:00
-#SBATCH --account=def-annielee
-
+#SBATCH --gpus-per-node=h100
+#SBATCH --mem=64G
+#SBATCH --time=48:00:00
+#SBATCH --account=rrg-annielee
+#SBATCH --cpus-per-task=16
 #############################################################
 # install the environment by loading in python and required packages
 module load python/3.11
 # virtualenv --no-download env
-source env/bin/activate
+source ~/env/bin/activate
 
 # pip install --no-index --upgrade pip
 
@@ -20,4 +20,4 @@ module load arrow
 #############################################################
 
 echo "Job Array ID / Job ID: $SLURM_ARRAY_JOB_ID / $SLURM_JOB_ID"
-python run.py --lang=wuu
+python run.py --pretrain

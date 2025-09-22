@@ -43,19 +43,27 @@ class SiniticPreTrainer:
         model = BertForMaskedLM.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain",
+            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain3",
             overwrite_output_dir=True,
-            num_train_epochs=10,
-            per_device_train_batch_size=16,
-            save_steps=1000,
+            num_train_epochs=1,
+            max_steps=200000,
+            per_device_train_batch_size=64,
+            gradient_accumulation_steps=4,
+            dataloader_num_workers=8,
+            learning_rate=1e-5,
+            warmup_steps=10000,
+            weight_decay=0.01,
+            save_steps=10000,
             save_total_limit=2,
-            logging_steps=100,
+            logging_steps=500,
             report_to="tensorboard",
             eval_strategy="steps",
-            eval_steps=500,
-            load_best_model_at_end=True,
-            metric_for_best_model="loss",
-            greater_is_better=False,
+            eval_steps=10000,
+            fp16=False,
+            bf16=True,
+            #load_best_model_at_end=True,
+            #metric_for_best_model="loss",
+            #greater_is_better=False,
         )
 
         trainer = Trainer(
@@ -64,36 +72,55 @@ class SiniticPreTrainer:
             train_dataset=self.lm_dataset["train"],
             eval_dataset=self.lm_dataset["validation"],
             data_collator=data_collator,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            #callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
 
         trainer.train()
-        trainer.save_model(f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain")
+        trainer.save_model(f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain3")
 
 class CantoPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local"):
         super().__init__(lang, model_dir)
-        if not os.path.exists("./data/yue-wiki-local"):
-            raise FileNotFoundError(
-                "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
-            )
+        #if not os.path.exists("./data/yue-wiki-local"):
+        #    raise FileNotFoundError(
+        #        "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
+        #    )
         if not os.path.exists(self.model_dir):
             raise FileNotFoundError(
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./data/yue-wiki-local")
+        self.ds = load_from_disk("./data/cantonese_sentences")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
+#        tokenizer_vocab_size = len(self.tokenizer)
+#        model_vocab_size = BertForMaskedLM.from_pretrained(self.model_dir).config.vocab_size
+
+#        print(f"🧐 Tokenizer vocabulary size: {tokenizer_vocab_size}")
+#        print(f"🤖 Model's expected vocabulary size: {model_vocab_size}")
 
     def preprocess_data(self):
         def tokenize_function(examples):
-            return self.tokenizer(examples["text"], return_special_tokens_mask=True, truncation=True,
-                                  padding="max_length", max_length=128)
+            return self.tokenizer(examples["content"], return_special_tokens_mask=True, truncation=False)
 
-        train_dataset, validation_dataset = self.ds["train"].train_test_split(test_size=0.1).values()
+        block_size = 128
+        def group_texts(examples):
+            # Concatenate all texts
+            concatenated = {k: sum(examples[k], []) for k in examples.keys()}
+            total_length = len(concatenated["input_ids"])
+            # Drop remainder
+            total_length = (total_length // block_size) * block_size
+            result = {
+                k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
+                for k, t in concatenated.items()
+            }
+            return result
+        dataset = self.ds["train"].shuffle(seed=42).flatten_indices()
+        train_dataset, valid_dataset = dataset.train_test_split(test_size=0.001, seed=42).values()
+        train_tokenized = train_dataset.map(tokenize_function, batched=True, remove_columns=["content"], num_proc=32)
+        valid_tokenized = valid_dataset.map(tokenize_function, batched=True ,remove_columns=["content"], num_proc=32)
         self.lm_dataset = {
-            "train": train_dataset.map(tokenize_function, batched=True, remove_columns=["text"]),
-            "validation": validation_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+            "train": train_tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32),
+            "validation": valid_tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32)
         }
 
 class WuPreTrainer(SiniticPreTrainer):
