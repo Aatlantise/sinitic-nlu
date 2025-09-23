@@ -30,9 +30,9 @@ class SiniticPreTrainer:
     def train(self):
         self.preprocess_data()
 
-        if any({split not in self.lm_dataset for split in ["train", "validation"]}):
-            raise ValueError(f"'train' and 'validation' splits must be present in lm_dataset."
-                             f"Found: {self.lm_dataset.keys()}")
+        # if any({split not in self.lm_dataset for split in ["train", "validation"]}):
+        #     raise ValueError(f"'train' and 'validation' splits must be present in lm_dataset."
+        #                      f"Found: {self.lm_dataset.keys()}")
 
         data_collator = DataCollatorForLanguageModeling(
             tokenizer=self.tokenizer,
@@ -70,7 +70,7 @@ class SiniticPreTrainer:
             model=model,
             args=training_args,
             train_dataset=self.lm_dataset["train"],
-            eval_dataset=self.lm_dataset["validation"],
+            # eval_dataset=self.lm_dataset["validation"],
             data_collator=data_collator,
             #callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
@@ -97,25 +97,27 @@ class CantoPreTrainer(SiniticPreTrainer):
         def tokenize_function(examples):
             return self.tokenizer(examples["content"], return_special_tokens_mask=True, truncation=False)
 
-        block_size = 128
         def group_texts(examples):
-            # Concatenate all texts
-            concatenated = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = len(concatenated["input_ids"])
-            # Drop remainder
-            total_length = (total_length // block_size) * block_size
-            result = {
-                k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
-                for k, t in concatenated.items()
-            }
-            return result
-        dataset = self.ds["train"].shuffle(seed=42).flatten_indices()
-        train_dataset, valid_dataset = dataset.train_test_split(test_size=0.001, seed=42).values()
-        train_tokenized = train_dataset.map(tokenize_function, batched=True, remove_columns=["content"], num_proc=32)
-        valid_tokenized = valid_dataset.map(tokenize_function, batched=True ,remove_columns=["content"], num_proc=32)
+            new_examples = {k: [] for k in examples.keys()}
+            for i in range(len(examples["input_ids"])):
+                input_ids = examples["input_ids"][i]
+                attention_mask = examples["attention_mask"][i]
+                special_tokens_mask = examples["special_tokens_mask"][i]
+                for j in range(0, len(input_ids), 128):
+                    new_examples["input_ids"].append(input_ids[j:j + 128])
+                    new_examples["attention_mask"].append(attention_mask[j:j + 128])
+                    new_examples["special_tokens_mask"].append(special_tokens_mask[j:j + 128])
+            return new_examples
+
+        dataset = self.ds['train']
+        print(f"Number of documents: {len(dataset)}")
+        tokenized = dataset.map(tokenize_function, batched=True, remove_columns=["content"], num_proc=32)
+        grouped = tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32)
+        print(f"Number of 128-token chunks: {len(grouped)}")
+        # train_dataset, valid_dataset = train_test_split(grouped, test_size=0.01, random_state=42)
+        grouped = grouped.shuffle(seed=42)
         self.lm_dataset = {
-            "train": train_tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32),
-            "validation": valid_tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32)
+            "train": grouped
         }
 
 class WuPreTrainer(SiniticPreTrainer):
