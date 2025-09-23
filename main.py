@@ -70,7 +70,7 @@ class SiniticPreTrainer:
             model=model,
             args=training_args,
             train_dataset=self.lm_dataset["train"],
-            # eval_dataset=self.lm_dataset["validation"],
+            eval_dataset=self.lm_dataset["validation"],
             data_collator=data_collator,
             #callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
         )
@@ -114,10 +114,11 @@ class CantoPreTrainer(SiniticPreTrainer):
         tokenized = dataset.map(tokenize_function, batched=True, remove_columns=["content"], num_proc=32)
         grouped = tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32)
         print(f"Number of 128-token chunks: {len(grouped)}")
-        # train_dataset, valid_dataset = train_test_split(grouped, test_size=0.01, random_state=42)
+        train_dataset, valid_dataset = train_test_split(grouped, test_size=0.01, random_state=42)
         grouped = grouped.shuffle(seed=42)
         self.lm_dataset = {
-            "train": grouped
+            "train": train_dataset,
+            "validation": valid_dataset
         }
 
 class WuPreTrainer(SiniticPreTrainer):
