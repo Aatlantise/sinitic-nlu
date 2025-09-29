@@ -43,10 +43,10 @@ class SiniticPreTrainer:
         model = BertForMaskedLM.from_pretrained(self.model_dir)
 
         training_args = TrainingArguments(
-            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain",
+            output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain-new",
             overwrite_output_dir=True,
             num_train_epochs=1,
-            max_steps=200000,
+            #max_steps=200000,
             per_device_train_batch_size=64,
             gradient_accumulation_steps=4,
             dataloader_num_workers=8,
@@ -76,7 +76,7 @@ class SiniticPreTrainer:
         )
 
         trainer.train()
-        trainer.save_model(f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain3")
+        trainer.save_model(f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain-new")
 
 class CantoPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local"):
@@ -90,15 +90,15 @@ class CantoPreTrainer(SiniticPreTrainer):
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./data/cantonese_sentences")
+        self.ds = load_from_disk("./data/cantonese_wiki")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
         def tokenize_function(examples):
-            return self.tokenizer(examples["content"], return_special_tokens_mask=True, truncation=False)
+            return self.tokenizer(examples["text"], return_special_tokens_mask=True, truncation=False)
 
         def group_texts(examples):
-            new_examples = {k: [] for k in examples.keys()}
+            new_examples = {'input_ids': [], 'attention_mask': [], 'special_tokens_mask': []}
             for i in range(len(examples["input_ids"])):
                 input_ids = examples["input_ids"][i]
                 attention_mask = examples["attention_mask"][i]
@@ -107,12 +107,18 @@ class CantoPreTrainer(SiniticPreTrainer):
                     new_examples["input_ids"].append(input_ids[j:j + 128])
                     new_examples["attention_mask"].append(attention_mask[j:j + 128])
                     new_examples["special_tokens_mask"].append(special_tokens_mask[j:j + 128])
+#            print("New Examples Length:", len(new_examples["input_ids"]))
+#            print(new_examples['input_ids'][0])
+            print(len(new_examples['input_ids']))
+            print(len(new_examples['attention_mask']))
+            print(len(new_examples['special_tokens_mask']))
             return new_examples
 
-        dataset = self.ds['train']
+        dataset = self.ds
         print(f"Number of documents: {len(dataset)}")
-        tokenized = dataset.map(tokenize_function, batched=True, remove_columns=["content"], num_proc=32)
-        grouped = tokenized.map(group_texts, batched=True, batch_size=1000, num_proc=32)
+        tokenized = dataset.map(tokenize_function, batched=True, remove_columns=["text"], num_proc=32)
+        grouped = tokenized.map(group_texts, batched=True, num_proc=1)
+        print(grouped)
         print(f"Number of 128-token chunks: {len(grouped)}")
         train_dataset, valid_dataset = train_test_split(grouped, test_size=0.01, random_state=42)
         grouped = grouped.shuffle(seed=42)
