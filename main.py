@@ -14,6 +14,7 @@ import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_recall_fscore_support
 from sklearn.model_selection import KFold, train_test_split
 import evaluate
+from tqdm import tqdm
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
@@ -94,34 +95,48 @@ class CantoPreTrainer(SiniticPreTrainer):
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
-        def tokenize_function(examples):
-            return self.tokenizer(examples["text"], return_special_tokens_mask=True, truncation=False)
 
-        def group_texts(examples):
-            new_examples = {'input_ids': [], 'attention_mask': [], 'special_tokens_mask': []}
-            for i in range(len(examples["input_ids"])):
-                input_ids = examples["input_ids"][i]
-                attention_mask = examples["attention_mask"][i]
-                special_tokens_mask = examples["special_tokens_mask"][i]
-                for j in range(0, len(input_ids), 128):
-                    new_examples["input_ids"].append(input_ids[j:j + 128])
-                    new_examples["attention_mask"].append(attention_mask[j:j + 128])
-                    new_examples["special_tokens_mask"].append(special_tokens_mask[j:j + 128])
-#            print("New Examples Length:", len(new_examples["input_ids"]))
-#            print(new_examples['input_ids'][0])
-            print(len(new_examples['input_ids']))
-            print(len(new_examples['attention_mask']))
-            print(len(new_examples['special_tokens_mask']))
-            return new_examples
+        def tokenize_text(text):
+            tokens = self.tokenizer(
+                text,
+                truncation=False,
+                return_attention_mask=True,
+                add_special_tokens=True
+            )
+
+            input_ids = tokens["input_ids"]
+            attention_mask = tokens["attention_mask"]
+
+            chunks = []
+            # Split into chunks of MAX_LENGTH
+            for i in range(0, len(input_ids), 128):
+                chunk = {
+                    "input_ids": input_ids[i:i + 128],
+                    "attention_mask": attention_mask[i:i + 128]
+                }
+                chunks.append(chunk)
+
+            return chunks
 
         dataset = self.ds
         print(f"Number of documents: {len(dataset)}")
-        tokenized = dataset.map(tokenize_function, batched=True, remove_columns=["text"], num_proc=32)
-        grouped = tokenized.map(group_texts, batched=True, num_proc=1)
-        print(grouped)
-        print(f"Number of 128-token chunks: {len(grouped)}")
-        train_dataset, valid_dataset = train_test_split(grouped, test_size=0.01, random_state=42)
-        grouped = grouped.shuffle(seed=42)
+
+        # Process all examples and flatten
+        all_chunks = []
+        for example in tqdm(dataset):
+            chunks = tokenize_text(example["text"])
+            all_chunks.extend(chunks)
+
+        # Create new dataset from chunks
+        tokenized = Dataset.from_dict({
+            "input_ids": [chunk["input_ids"] for chunk in all_chunks],
+            "attention_mask": [chunk["attention_mask"] for chunk in all_chunks]
+        })
+
+        print(f"Number of 128-token chunks: {len(tokenized)}")
+        split_dataset = tokenized.train_test_split(test_size=0.01, seed=42)
+        train_dataset = split_dataset["train"]
+        valid_dataset = split_dataset["test"]
         self.lm_dataset = {
             "train": train_dataset,
             "validation": valid_dataset
