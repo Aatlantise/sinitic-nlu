@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --gpus-per-node=h100
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=3:00:00
 #SBATCH --account=rrg-annielee
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=4
 #############################################################
 # install the environment by loading in python and required packages
 module load python/3.11
