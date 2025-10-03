@@ -16,6 +16,8 @@ from sklearn.model_selection import KFold, train_test_split
 import evaluate
 from tqdm import tqdm
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local"):
         self.ds = None
@@ -47,24 +49,24 @@ class SiniticPreTrainer:
             output_dir=f"/home/yorkng/scratch/sinitic-nlu/{self.lang}-pretrain-new",
             overwrite_output_dir=True,
             num_train_epochs=1,
-            #max_steps=200000,
-            per_device_train_batch_size=64,
-            gradient_accumulation_steps=4,
+#            max_steps=20000,
+            per_device_train_batch_size=128,
+#            gradient_accumulation_steps=4,
             dataloader_num_workers=8,
             learning_rate=1e-5,
             warmup_steps=10000,
             weight_decay=0.01,
             save_steps=10000,
             save_total_limit=2,
-            logging_steps=500,
+            logging_steps=100,
             report_to="tensorboard",
             eval_strategy="steps",
-            eval_steps=10000,
+            eval_steps=1000,
             fp16=False,
             bf16=True,
-            #load_best_model_at_end=True,
-            #metric_for_best_model="loss",
-            #greater_is_better=False,
+            load_best_model_at_end=True,
+            metric_for_best_model="loss",
+            greater_is_better=False,
         )
 
         trainer = Trainer(
@@ -73,7 +75,7 @@ class SiniticPreTrainer:
             train_dataset=self.lm_dataset["train"],
             eval_dataset=self.lm_dataset["validation"],
             data_collator=data_collator,
-            #callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            #callbacks=[EarlyStoppingCallback(early_stopping_patience=10)],
         )
 
         trainer.train()
@@ -91,14 +93,14 @@ class CantoPreTrainer(SiniticPreTrainer):
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./data/cantonese_wiki")
+        self.ds = load_from_disk("./data/cantonese_sentences")
         self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
 
         def tokenize_text(text):
             tokens = self.tokenizer(
-                text,
+                text['content'],
                 truncation=False,
                 return_attention_mask=True,
                 add_special_tokens=True
@@ -118,13 +120,14 @@ class CantoPreTrainer(SiniticPreTrainer):
 
             return chunks
 
-        dataset = self.ds
+        dataset = self.ds['train']
+       # print(dataset)
         print(f"Number of documents: {len(dataset)}")
 
         # Process all examples and flatten
         all_chunks = []
         for example in tqdm(dataset):
-            chunks = tokenize_text(example["text"])
+            chunks = tokenize_text(example)
             all_chunks.extend(chunks)
 
         # Create new dataset from chunks
@@ -134,7 +137,7 @@ class CantoPreTrainer(SiniticPreTrainer):
         })
 
         print(f"Number of 128-token chunks: {len(tokenized)}")
-        split_dataset = tokenized.train_test_split(test_size=0.01, seed=42)
+        split_dataset = tokenized.train_test_split(test_size=0.001, seed=42)
         train_dataset = split_dataset["train"]
         valid_dataset = split_dataset["test"]
         self.lm_dataset = {

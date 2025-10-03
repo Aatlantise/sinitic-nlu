@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --gpus-per-node=h100
-#SBATCH --mem=64G
-#SBATCH --time=3:00:00
-#SBATCH --account=rrg-annielee
+#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3_3g.40gb:1
+#SBATCH --mem=128G
+#SBATCH --time=12:00:00
+#SBATCH --account=def-annielee
 #SBATCH --cpus-per-task=4
 #############################################################
 # install the environment by loading in python and required packages
@@ -20,4 +20,4 @@ module load arrow
 #############################################################
 
 echo "Job Array ID / Job ID: $SLURM_ARRAY_JOB_ID / $SLURM_JOB_ID"
-python run.py --pretrain
+python run.py --pretrain --model_dir="models/yue-pretrain-wiki"

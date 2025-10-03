@@ -19,8 +19,8 @@ def download(args):
 #        print("Download SOTA Cantonese BERT model...")
         #BertForMaskedLM.from_pretrained('hon9kon9ize/bert-base-cantonese').save_pretrained(args.model_dir)
         #BertTokenizerFast.from_pretrained('hon9kon9ize/bert-base-cantonese').save_pretrained(args.model_dir)
-#        ds = load_dataset("raptorkwok/cantonese_sentences")
-#        ds.save_to_disk("./data/cantonese_sentences")
+        ds = load_dataset("raptorkwok/cantonese_sentences")
+        ds.save_to_disk("./data/cantonese_sentences")
     elif args.lang == "wuu":
         print("Downloading Wu Wiki dataset...")
         ds = load_dataset("wikimedia/wikipedia", "20231101.wuu")
