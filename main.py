@@ -11,6 +11,7 @@ from transformers import (
     BertPreTrainedModel,
     BertModel,
     BertConfig,
+    AutoTokenizer
 )
 from transformers.modeling_outputs import TokenClassifierOutput
 import os
@@ -18,6 +19,8 @@ import numpy as np
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 from utils import get_subset
 import torch.nn as nn
+import re
+from tqdm import tqdm
 
 
 class SiniticPreTrainer:
@@ -29,9 +32,6 @@ class SiniticPreTrainer:
         self.tokenized_ds = None
         self.lm_dataset = None
         self.from_scratch = scratch
-
-        if scratch:
-            self.model_dir = "./models/cantonese_tokenizer/"
 
     def preprocess_data(self):
         self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
@@ -73,7 +73,7 @@ class SiniticPreTrainer:
         )
 
         config = BertConfig(
-            vocab_size=self.tokenizer.vocab_size,
+            vocab_size=len(self.tokenizer),
             hidden_size=768,
             num_hidden_layers=12,
             num_attention_heads=12,
@@ -85,8 +85,10 @@ class SiniticPreTrainer:
 
         if self.from_scratch:
             model = BertForMaskedLM(config=config)
+            model.resize_token_embeddings(len(self.tokenizer))
         else:
             model = BertForMaskedLM.from_pretrained(self.model_dir)
+            model.resize_token_embeddings(len(self.tokenizer))
 
         output_dir_name = f"./{self.lang}-scratch" if self.from_scratch else "./{self.lang}-transfer"
 
@@ -94,7 +96,7 @@ class SiniticPreTrainer:
             output_dir=output_dir_name,
             overwrite_output_dir=True,
             learning_rate=2e-5,
-            num_train_epochs=10,
+            num_train_epochs=30,
             per_device_train_batch_size=16,
             save_steps=1000,
             save_total_limit=2,
@@ -132,17 +134,66 @@ class CantoPreTrainer(SiniticPreTrainer):
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
         self.ds = load_from_disk("./data/yue-wiki-full-local")
-        self.tokenizer = BertTokenizerFast.from_pretrained(self.model_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir)
 
-    def preprocess_sent_data(self):
-        def tokenize_function(examples):
-            return self.tokenizer(examples["text"], return_special_tokens_mask=True, truncation=True,
-                                  padding="max_length", max_length=128)
+    def preprocess_data(self):
 
-        train_dataset, validation_dataset = self.ds["train"].train_test_split(test_size=0.1).values()
+        def tokenize_text(text):
+            PARENS_JUNK = re.compile(r"\(\s*[, -]*\s*\)")
+
+            def clean_parentheses(text: str) -> str:
+                """
+                Remove parentheses whose content is only whitespace, commas, or dashes.
+                """
+                return PARENS_JUNK.sub("", text)
+
+            text = clean_parentheses(text)
+            tokens = self.tokenizer(
+                text,
+                truncation=False,
+                return_attention_mask=True,
+                add_special_tokens=True
+            )
+
+            input_ids = tokens["input_ids"]
+            attention_mask = tokens["attention_mask"]
+
+            chunks = []
+            # Split into chunks of MAX_LENGTH
+            for i in range(0, len(input_ids), 128):
+                chunk = {
+                    "input_ids": input_ids[i:i + 128],
+                    "attention_mask": attention_mask[i:i + 128]
+                }
+                chunks.append(chunk)
+
+            return chunks, len(input_ids)
+
+        dataset = self.ds
+        print(f"Number of documents: {len(dataset)}")
+
+        # Process all examples and flatten
+        all_chunks = []
+        total_num_tokens = 0
+        for example in tqdm(dataset['train']):
+            chunks, num_tokens = tokenize_text(example["text"])
+            total_num_tokens += num_tokens
+            all_chunks.extend(chunks)
+
+        # Create new dataset from chunks
+        tokenized = Dataset.from_dict({
+            "input_ids": [chunk["input_ids"] for chunk in all_chunks],
+            "attention_mask": [chunk["attention_mask"] for chunk in all_chunks]
+        })
+
+        print(f"Number of 128-token chunks: {len(tokenized)}")
+        print(f"Number of tokens: {total_num_tokens}")
+        split_dataset = tokenized.train_test_split(test_size=0.01, seed=42)
+        train_dataset = split_dataset["train"]
+        valid_dataset = split_dataset["test"]
         self.lm_dataset = {
-            "train": train_dataset.map(tokenize_function, batched=True, remove_columns=["text"]),
-            "validation": validation_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
+            "train": train_dataset,
+            "validation": valid_dataset
         }
 
 class WuPreTrainer(SiniticPreTrainer):
@@ -279,7 +330,13 @@ class CantoPOSFineTuner(CantoPreTrainer):
     def __init__(self, lang, model_dir):
         super().__init__(lang, model_dir)
         self.finetune_dataset = None
-        self.tokenizer = BertTokenizerFast.from_pretrained(model_dir)
+        self.tokenizer = BertTokenizerFast.from_pretrained(model_dir,
+                                                           unk_token="[UNK]",
+                                                           pad_token="[PAD]",
+                                                           cls_token="[CLS]",
+                                                           sep_token="[SEP]",
+                                                           mask_token="[MASK]",
+                                                           )
         self.pos_tags = ['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM',
                     'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X']
         self.tag2id = {tag: i for i, tag in enumerate(self.pos_tags)}
@@ -439,9 +496,7 @@ class BertForDependencyParsing(BertPreTrainedModel):
         # Return a tuple so Trainer hands both logits to compute_metrics
         return {"loss": loss, "logits": (head_logits, rel_logits)}
 
-# ----------------------
-# Fine-tuner
-# ----------------------
+
 class CantoDEPSFineTuner(CantoPreTrainer):
     def __init__(self, lang, model_dir):
         super().__init__(lang, model_dir)
@@ -569,8 +624,8 @@ class CantoDEPSFineTuner(CantoPreTrainer):
         args = TrainingArguments(
             output_dir=f"./models/{self.lang}-deps-{self.model_dir.strip('/').split('/')[-1]}",
             overwrite_output_dir=True,
-            num_train_epochs=10,
-            learning_rate=3e-5,
+            num_train_epochs=3,
+            learning_rate=2e-5,
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
             eval_strategy="epoch",

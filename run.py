@@ -27,7 +27,7 @@ def run(args):
                 model = CantoDEPSFineTuner(args.lang, model_dir=args.model_dir)
                 model.finetune()
             else:
-                print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli")
+                print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli, deps")
         else:
             print(f"{args.lang} fine-tuning is not supported. Please choose from: yue")
     if args.eval_only:
@@ -58,6 +58,8 @@ if __name__ == "__main__":
     """
     Add your custom arguments for IDE tests here
     """
+    args.model_dir = "models/yue-scratch"
+    args.scratch = True
 
     if args.task:
         args.finetune = True
