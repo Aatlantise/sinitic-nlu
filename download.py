@@ -5,17 +5,23 @@ from argparse import ArgumentParser
 def download(args):
     print("Downloading datasets and models...")
     if args.lang == "yue":
-        print("Downloading Cantonese Wiki sentence dataset...")
-        ds = load_dataset("R5dwMg/zh-wiki-yue-long")
-        ds.save_to_disk("./data/yue-wiki-subset-local")
         print("Downloading Cantonese Wikipedia full dataset...")
-        ds = load_dataset("wikimedia/wikipedia", "20231101.zh-yue")
+        ds = load_dataset("wikimedia/wikipedia", "20231101.zh-yue", split='train')
         ds.save_to_disk("./data/yue-wiki-full-local")
         print("Downloading Cantonese NLI dataset...")
         ds = load_dataset("hon9kon9ize/yue-all-nli")
         ds.save_to_disk("./data/yue-nli-local")
+#        print("Downloading Cantonese NLU dataset...")
+#        ds = load_dataset("Swithord/cantonese-nlu")
+#        ds.save_to_disk("./cantonese-nlu-local")
+
         print("Downloading BERT tokenizer and model...")
         BertTokenizerFast.from_pretrained('bert-base-chinese').save_pretrained(args.model_dir)
+#        print("Download SOTA Cantonese BERT model...")
+        #BertForMaskedLM.from_pretrained('hon9kon9ize/bert-base-cantonese').save_pretrained(args.model_dir)
+        #BertTokenizerFast.from_pretrained('hon9kon9ize/bert-base-cantonese').save_pretrained(args.model_dir)
+        ds = load_dataset("raptorkwok/cantonese_sentences")
+        ds.save_to_disk("./data/cantonese_sentences")
     elif args.lang == "wuu":
         print("Downloading Wu Wiki dataset...")
         ds = load_dataset("wikimedia/wikipedia", "20231101.wuu")
