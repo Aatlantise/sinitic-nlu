@@ -5,15 +5,16 @@ from argparse import ArgumentParser
 def download(args):
     print("Downloading datasets and models...")
     if args.lang == "yue":
-        print("Downloading Cantonese Wiki dataset...")
+        print("Downloading Cantonese Wikipedia full dataset...")
         ds = load_dataset("wikimedia/wikipedia", "20231101.zh-yue", split='train')
-        ds.save_to_disk("./data/cantonese_wiki")
+        ds.save_to_disk("./data/yue-wiki-full-local")
         print("Downloading Cantonese NLI dataset...")
         ds = load_dataset("hon9kon9ize/yue-all-nli")
-        ds.save_to_disk("./yue-nli-local")
+        ds.save_to_disk("./data/yue-nli-local")
 #        print("Downloading Cantonese NLU dataset...")
 #        ds = load_dataset("Swithord/cantonese-nlu")
 #        ds.save_to_disk("./cantonese-nlu-local")
+
         print("Downloading BERT tokenizer and model...")
         BertTokenizerFast.from_pretrained('bert-base-chinese').save_pretrained(args.model_dir)
 #        print("Download SOTA Cantonese BERT model...")
@@ -24,7 +25,7 @@ def download(args):
     elif args.lang == "wuu":
         print("Downloading Wu Wiki dataset...")
         ds = load_dataset("wikimedia/wikipedia", "20231101.wuu")
-        ds.save_to_disk("./wuu-wiki-local")
+        ds.save_to_disk("./data/wuu-wiki-local")
         print("Downloading BERT tokenizer...")
         BertTokenizerFast.from_pretrained('bert-base-chinese').save_pretrained(args.model_dir)
     else:
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--lang", default="yue", choices=["yue", "wuu"],
                         help="Language to download data for")
-    parser.add_argument("--model_dir", default="./bert-base-chinese-local",
+    parser.add_argument("--model_dir", default="./models/bert-base-chinese-local",
                         help="Directory to save the model and tokenizer")
     args = parser.parse_args()
     download(args)

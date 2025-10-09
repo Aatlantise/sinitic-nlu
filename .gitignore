@@ -1,3 +1,5 @@
 # IDE artifacts
 .idea/*
 *.sh
+data/*
+models/*
