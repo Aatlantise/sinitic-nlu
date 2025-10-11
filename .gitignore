@@ -3,3 +3,5 @@
 *.sh
 data/*
 models/*
+yue-scratch/*
+*.zip

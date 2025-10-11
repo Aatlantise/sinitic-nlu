@@ -30,7 +30,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class SiniticPreTrainer:
-    def __init__(self, lang="", model_dir="./models/bert-base-chinese-local", scratch=False):
+    def __init__(self, lang="", model_dir="./models/bert-base-chinese-local", scratch=False, data=None):
         self.ds = None
         self.tokenizer = None
         self.lang = lang
@@ -38,6 +38,7 @@ class SiniticPreTrainer:
         self.tokenized_ds = None
         self.lm_dataset = None
         self.from_scratch = scratch
+        self.data = data
 
     def preprocess_data(self):
         self.ds = self.ds.filter(lambda x: len(x["text"]) > 100)  # Remove stubs/empty pages
@@ -96,10 +97,10 @@ class SiniticPreTrainer:
             model = BertForMaskedLM.from_pretrained(self.model_dir)
             model.resize_token_embeddings(len(self.tokenizer))
 
-        output_dir_name = f"./{self.lang}-scratch" if self.from_scratch else "./{self.lang}-transfer"
+        output_dir_name = f"./{self.lang}-scratch" if self.from_scratch else f"./{self.lang}-transfer"
 
         training_args = TrainingArguments(
-            num_train_epochs=1,
+            num_train_epochs=2,
             per_device_train_batch_size=128,
             dataloader_num_workers=8,
             learning_rate=1e-5,
@@ -131,22 +132,43 @@ class SiniticPreTrainer:
         trainer.save_model(output_dir_name)
 
 class CantoPreTrainer(SiniticPreTrainer):
-    def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local", scratch=False):
-        super().__init__(lang, model_dir, scratch)
-        if not os.path.exists("./data/yue-wiki-full-local"):
-            raise FileNotFoundError(
-                "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
-            )
+    def __init__(self, lang="yue", model_dir="./models/bert-base-chinese-local", scratch=False, data=None):
+        super().__init__(lang, model_dir, scratch, data)
+        # checking data happens in run.py
+        if data == "cantonese-sentences":
+            if not os.path.exists("./data/cantonese-sentences"):
+                raise FileNotFoundError(
+                    "Cantonese Sentences dataset not found. Please first run `python download.py --lang=yue`."
+                )
+            self.ds = load_from_disk("./data/cantonese-sentences")
+        else:
+            if not os.path.exists("./data/yue-wiki-full-local"):
+                raise FileNotFoundError(
+                    "Cantonese Wiki dataset not found. Please first run `python download.py --lang=yue`."
+                )
+            self.ds = load_from_disk("./data/yue-wiki-full-local")
 
         if not os.path.exists(self.model_dir):
             raise FileNotFoundError(
                 f"Model directory {self.model_dir} not found."
                 f"Please first run `python download.py --lang=yue --model_dir={self.model_dir}`."
             )
-        self.ds = load_from_disk("./data/yue-wiki-full-local")
+
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir)
 
     def preprocess_data(self):
+        if self.data == "wiki":
+            self.wiki_preprocess_data()
+        elif self.data == "cantonese-sentences":
+            self.wiki_preprocess_data() # for future use if there's a need to implement something different
+        else:
+            raise ValueError(f"{self.data} not supported--please choose between `wiki` or `cantonese-sentences`.")
+
+
+    def canto_sentences_preprocess_data(self):
+        pass
+
+    def wiki_preprocess_data(self):
 
         def tokenize_text(text):
             PARENS_JUNK = re.compile(r"\(\s*[, -]*\s*\)")
@@ -185,8 +207,10 @@ class CantoPreTrainer(SiniticPreTrainer):
         # Process all examples and flatten
         all_chunks = []
         total_num_tokens = 0
+        dataset = dataset['train'] if self.data == "cantonese-sentences" else dataset
         for example in tqdm(dataset):
-            chunks, num_tokens = tokenize_text(example["text"])
+            ex = example["text"] if self.data == "wiki" else example["content"]
+            chunks, num_tokens = tokenize_text(ex)
             total_num_tokens += num_tokens
             all_chunks.extend(chunks)
 
@@ -879,6 +903,7 @@ class CantoAcceptabilityFineTuner(CantoNLIFineTuner):
             "train": train_set,
             "validation": valid_set,
             "test": test_set
+        }
           
         model = BertForSequenceClassification.from_pretrained(
             self.model_dir,

@@ -5,10 +5,9 @@ from transformers import Trainer
 def run(args):
     if args.pretrain:
         if args.lang == "yue":
-            if args.scratch:
-                model = CantoPreTrainer(model_dir=args.model_dir, scratch=True)
-            else:
-                model = CantoPreTrainer(model_dir=args.model_dir)
+            assert args.data in ["wiki",
+                                "cantonese-sentences"], f"{args.data} is not a valid dataset. Choose between 'wiki', 'cantonese-sentences'"
+            model = CantoPreTrainer(model_dir=args.model_dir, scratch=args.scratch, data=args.data)
             model.train()
         elif args.lang == "wuu":
             model = WuPreTrainer(model_dir=args.model_dir)
@@ -56,18 +55,18 @@ if __name__ == "__main__":
     parser.add_argument("--scratch", action="store_true", default=False)
     parser.add_argument("--finetune", action="store_true", default=False)
     parser.add_argument("--eval_only", action="store_true", default=False)
+    parser.add_argument("--data", type=str, default="wiki")
     parser.add_argument("--task", type=str, default="")
     args = parser.parse_args()
 
     """
     Add your custom arguments for IDE tests here
     """
-    args.model_dir = "models/yue-scratch"
-    args.scratch = True
 
     if args.task:
         args.finetune = True
     if args.scratch:
         args.pretrain = True
 
+    print(args)
     run(args)
