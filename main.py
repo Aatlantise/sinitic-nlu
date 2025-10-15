@@ -169,66 +169,56 @@ class CantoPreTrainer(SiniticPreTrainer):
         pass
 
     def wiki_preprocess_data(self):
+        PARENS_JUNK = re.compile(r"\(\s*[, -]*\s*\)")
 
-        def tokenize_text(text):
-            PARENS_JUNK = re.compile(r"\(\s*[, -]*\s*\)")
+        def clean_parentheses(text: str) -> str:
+            return PARENS_JUNK.sub("", text)
 
-            def clean_parentheses(text: str) -> str:
-                """
-                Remove parentheses whose content is only whitespace, commas, or dashes.
-                """
-                return PARENS_JUNK.sub("", text)
+        def tokenize_function(batch):
+            # Clean all texts in batch
+            _batch = batch['text'] if self.data == "wiki" else batch['content']
+            cleaned = [clean_parentheses(t) for t in _batch]
 
-            text = clean_parentheses(text)
+            # Tokenize in batch
             tokens = self.tokenizer(
-                text,
+                cleaned,
                 truncation=False,
                 return_attention_mask=True,
                 add_special_tokens=True
             )
 
-            input_ids = tokens["input_ids"]
-            attention_mask = tokens["attention_mask"]
+            # Split each sequence into 128-token chunks
+            input_batch = []
+            attn_batch = []
+            for input_ids, attention_mask in zip(tokens["input_ids"], tokens["attention_mask"]):
+                for i in range(0, len(input_ids), 128):
+                    input_batch.append(input_ids[i:i + 128])
+                    attn_batch.append(attention_mask[i:i + 128])
+            return {"input_ids": input_batch, "attention_mask": attn_batch}
 
-            chunks = []
-            # Split into chunks of MAX_LENGTH
-            for i in range(0, len(input_ids), 128):
-                chunk = {
-                    "input_ids": input_ids[i:i + 128],
-                    "attention_mask": attention_mask[i:i + 128]
-                }
-                chunks.append(chunk)
-
-            return chunks, len(input_ids)
-
-        dataset = self.ds
+        dataset = self.ds["train"] if self.data == "cantonese-sentences" else self.ds
         print(f"Number of documents: {len(dataset)}")
 
-        # Process all examples and flatten
-        all_chunks = []
-        total_num_tokens = 0
-        dataset = dataset['train'] if self.data == "cantonese-sentences" else dataset
-        for example in tqdm(dataset):
-            ex = example["text"] if self.data == "wiki" else example["content"]
-            chunks, num_tokens = tokenize_text(ex)
-            total_num_tokens += num_tokens
-            all_chunks.extend(chunks)
-
-        # Create new dataset from chunks
-        tokenized = Dataset.from_dict({
-            "input_ids": [chunk["input_ids"] for chunk in all_chunks],
-            "attention_mask": [chunk["attention_mask"] for chunk in all_chunks]
-        })
+        # Use map with batched=True to avoid full in-memory loading
+        tokenized = dataset.map(
+            tokenize_function,
+            batched=True,
+            remove_columns=dataset.column_names,
+            desc="Tokenizing dataset",
+        )
 
         print(f"Number of 128-token chunks: {len(tokenized)}")
-        print(f"Number of tokens: {total_num_tokens}")
+
+        # Train/validation split
         split_dataset = tokenized.train_test_split(test_size=0.01, seed=42)
-        train_dataset = split_dataset["train"]
-        valid_dataset = split_dataset["test"]
         self.lm_dataset = {
-            "train": train_dataset,
-            "validation": valid_dataset
+            "train": split_dataset["train"],
+            "validation": split_dataset["test"]
         }
+
+        # Optional: save preprocessed dataset to disk
+        tokenized.save_to_disk(f"data/pretokenized_{self.data}")
+
 
 class WuPreTrainer(SiniticPreTrainer):
     def __init__(self, lang="wuu", model_dir="./models/bert-base-chinese-local"):
