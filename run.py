@@ -29,7 +29,7 @@ def run(args):
                 model = CantoAcceptabilityFineTuner(args.lang, model_dir=args.model_dir)
                 model.finetune()
             else:
-                print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli, deps")
+                print(f"{args.task} fine-tuning is not supported. Please choose from: pos, nli, deps, accept")
 
         else:
             print(f"{args.lang} fine-tuning is not supported. Please choose from: yue")
@@ -67,6 +67,8 @@ if __name__ == "__main__":
         args.finetune = True
     if args.scratch:
         args.pretrain = True
+    if args.eval_only:
+        args.finetune = False
 
     print(args)
     run(args)

@@ -5,7 +5,6 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-
     EarlyStoppingCallback,
     BertForSequenceClassification,
     BertForTokenClassification,
@@ -27,7 +26,6 @@ import re
 from tqdm import tqdm
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 class SiniticPreTrainer:
     def __init__(self, lang="", model_dir="./models/bert-base-chinese-local", scratch=False, data=None):
@@ -260,20 +258,20 @@ class CantoNLIFineTuner(CantoPreTrainer):
         self.preprocess_data(eval_only=eval_only)
         self.model = BertForSequenceClassification.from_pretrained(self.model_dir)
         self.training_args = TrainingArguments(
-            output_dir=f"./models/{self.lang}-nlu-{[f for f in self.model_dir.split('/') if f][-1]}",
+            output_dir=f"./models/{self.lang}-nli-{[f for f in self.model_dir.split('/') if f][-1]}",
             overwrite_output_dir=True,
             num_train_epochs=3,
             optim="adamw_torch",
             learning_rate=2e-5,
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
-            save_steps=1000,
+            save_steps=5000,
             save_total_limit=2,
-            logging_steps=100,
+            logging_steps=5000,
             report_to="tensorboard",
             eval_strategy="steps",
-            eval_steps=500,
-            load_best_model_at_end=True,
+            eval_steps=10000,
+            load_best_model_at_end=False,
             metric_for_best_model="loss",
             greater_is_better=False,
         )
@@ -650,7 +648,7 @@ class CantoDEPSFineTuner(CantoPreTrainer):
         args = TrainingArguments(
             output_dir=f"./models/{self.lang}-deps-{self.model_dir.strip('/').split('/')[-1]}",
             overwrite_output_dir=True,
-            num_train_epochs=3,
+            num_train_epochs=20,
             learning_rate=2e-5,
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
@@ -722,6 +720,11 @@ class CantoDEPSFineTuner(CantoPreTrainer):
         )
 
         trainer.train()
+
+        metrics = trainer.evaluate(self.finetune_dataset["test"])
+        print(f"Final test accuracy: {metrics['eval_uas']}")
+        print(f"Final test macro F1: {metrics['eval_las']}")
+
         trainer.save_model(f"./models/{self.lang}-deps-{self.model_dir.strip('/').split('/')[-1]}")
 
 
@@ -871,29 +874,36 @@ class CantoTokenClassificationFineTuner(CantoNLIFineTuner):
         print(f"Average F1 Positive: {np.mean(cross_validation_results['f1_positive'])}")
 
 class CantoAcceptabilityFineTuner(CantoNLIFineTuner):
-    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local"):
-        super().__init__(lang, model_dir)
+    def __init__(self, lang="yue", model_dir="./bert-base-chinese-local", eval_only=False):
+        super().__init__(lang, model_dir, eval_only)
 
-    def preprocess_data(self):
+    def preprocess_data(self, eval_only=False):
         data = load_from_disk('data/acceptability-dataset-2')
         data = data.shuffle(seed=42)
 
         def tokenize(example):
             return self.tokenizer(example["text"], return_special_tokens_mask=True, truncation=True, padding="max_length", max_length=128)
 
-        self.finetune_dataset = []
         train_set, temp_set = data.train_test_split(test_size=0.1, seed=42).values()
         valid_set, test_set = temp_set.train_test_split(test_size=0.5, seed=42).values()
 
-        train_set = train_set.map(tokenize, batched=True, remove_columns=["text"])
-        valid_set = valid_set.map(tokenize, batched=True, remove_columns=["text"])
+        if not eval_only:
+            train_set, temp_set = data.train_test_split(test_size=0.1, seed=42).values()
+            train_set = train_set.map(tokenize, batched=True, remove_columns=["text"])
+            valid_set = valid_set.map(tokenize, batched=True, remove_columns=["text"])
+
         test_set = test_set.map(tokenize, batched=True, remove_columns=["text"])
 
-        self.finetune_dataset = {
-            "train": train_set,
-            "validation": valid_set,
-            "test": test_set
-        }
+        if not eval_only:
+            self.finetune_dataset = {
+                "train": train_set,
+                "validation": valid_set,
+                "test": test_set
+            }
+        else:
+            self.finetune_dataset = {
+                "test": test_set
+            }
           
         model = BertForSequenceClassification.from_pretrained(
             self.model_dir,
