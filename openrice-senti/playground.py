@@ -88,7 +88,7 @@ for model_name, model_path in model_options.items():
     tokenizer = tokenizer_class.from_pretrained(model_path)
 
     def tokenize_function(examples):
-        return tokenizer(examples["text"], padding=True, truncation=True, max_length=512)
+        return tokenizer(examples["text"], padding=True, truncation=True, max_length=128)
 
     # Tokenize datasets
     tokenized_datasets = {
