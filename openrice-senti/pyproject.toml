@@ -1,5 +1,5 @@
 [project]
-name = "sinitic-transfer-wsd"
+name = "sinitic-transfer-sent"
 version = "0.1.0"
 description = "Scraped reviews from OpenRice for sentiment analysis"
 readme = "README.md"
