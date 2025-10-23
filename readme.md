@@ -32,5 +32,6 @@ and place it in `data/`, then use the `conllu_2_pos_dataset()` function in `util
 ## Pre-trained model weights
 
 The monolingual and transfer models are available at the following Google Drive links.
-Monolingual model: https://drive.google.com/file/d/1wl4MYqPRxj5FPdHJR8SXC7Z7SZCFsLNw/view?usp=drive_link
-Transfer model: https://drive.google.com/file/d/19QKyw-lzbNmU1_EcBUuDuO4TiEfFFuFF/view?usp=drive_link
+
+* Monolingual model: https://drive.google.com/file/d/1wl4MYqPRxj5FPdHJR8SXC7Z7SZCFsLNw/view?usp=drive_link
+* Transfer model: https://drive.google.com/file/d/19QKyw-lzbNmU1_EcBUuDuO4TiEfFFuFF/view?usp=drive_link
