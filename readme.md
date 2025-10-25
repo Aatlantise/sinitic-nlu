@@ -1,6 +1,8 @@
-# Sinitic NLU & Transfer learning
+# Sinitic NLU
 
 We investigate transfer learning from Mandarin to other Sinitic languages (Cantonese, Wu, Hokkien).
+
+The Cantonese portion of thie repository accompanies our preprint: ["CantoNLU: A benchmark for Cantonese natural language understanding"](https://arxiv.org/html/2510.20670v1).
 
 ## Download model first
 
