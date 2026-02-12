@@ -1,12 +1,10 @@
-# Sinitic NLU
+# CantoNLU
 
-We investigate transfer learning from Mandarin to other Sinitic languages (Cantonese, Wu, Hokkien).
-
-The Cantonese portion of thie repository accompanies our preprint: ["CantoNLU: A benchmark for Cantonese natural language understanding"](https://arxiv.org/html/2510.20670v1).
+This repository accompanies our preprint: ["CantoNLU: A benchmark for Cantonese natural language understanding"](https://arxiv.org/html/2510.20670v1), where we introduce a general language understanding benchmark in Cantonese, in a collaboration with York Hay Ng, Sophia Chan, Helena Zhao, and Annie En-Shiun Lee.
 
 ## Download model first
 
-This repository requires a local copy of the BERT model and Wikipedia dataset to run.
+This repository requires a local copy of a BERT model and Wikipedia dataset to run.
 
 To download the resources, simply run
 
