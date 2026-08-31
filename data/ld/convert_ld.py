@@ -1,12 +1,9 @@
 """Canonicalize the LD (language discrimination) dataset to .jsonl.
 
-Reimplements the pipeline in acceptability-dataset.ipynb (misnamed: it
-distinguishes Cantonese / Mandarin / code-mixed-corrupted text, not
-acceptability judgments):
+Reimplements the pipeline in acceptability-dataset.ipynb:
   - label 0: original Cantonese sentence
-  - label 1: original Mandarin sentence (converted to traditional script)
-  - label 2: corrupted, partially code-mixed sentence (word-alignment based
-    substitution between the Yue/Cmn parallel pair)
+  - label 1: original Mandarin sentence
+  - label 2: corrupted, partially code-mixed sentence
 
 Source corpus: HKAllen/cantonese-chinese-parallel-corpus (HF datasets)
 
