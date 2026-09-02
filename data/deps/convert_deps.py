@@ -57,6 +57,7 @@ def parse_conllu(file_path):
 
 
 def main():
+    """Split 90/10 by rows, no shuffle, and write to .jsonl files."""
     download_conllu()
     sentences, dep_labels, head_labels = parse_conllu(CONLLU_PATH)
 

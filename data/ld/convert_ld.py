@@ -65,8 +65,7 @@ def build_examples(n_sentences: int, device: str):
         examples.append((source_id, sentence["yue"], 0))
         examples.append((source_id, cmn_traditional, 1))
 
-    # Match the notebook's post-filtering: drop residual [UNK]/"##" noise and
-    # any sentence that still contains Latin letters.
+
     filtered = []
     for source_id, sentence, label in examples:
         if "[UNK]" in sentence:
@@ -80,8 +79,8 @@ def build_examples(n_sentences: int, device: str):
 
 
 def split_by_source(examples):
-    """Split 90/5/5 by source_id (not row) so sentence variants derived
-    from the same source pair all land in the same split."""
+    """Split 90/5/5 by source_id so sentence variants derived
+    from the same source pair will come in the same split."""
     source_ids = sorted(set(source_id for source_id, _, _ in examples))
     n = len(source_ids)
     train_end = int(n * TRAIN_RATIO)
