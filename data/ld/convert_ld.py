@@ -5,14 +5,12 @@ Reimplements the pipeline in acceptability-dataset.ipynb:
   - label 1: original Mandarin sentence
   - label 2: corrupted, partially code-mixed sentence
 
-Source corpus: HKAllen/cantonese-chinese-parallel-corpus (HF datasets)
+acceptability-dataset.ipynb: https://github.com/Aatlantise/canto-nlu/blob/helena-data/acceptability-dataset.ipynb
 
-Train/val/test are split 90/5/5 by source sentence pair (not by row) so
-that variants of the same source pair never leak across splits, matching
-the split reported in the CantoNLU preprint (arxiv 2510.20670).
+Source corpus: HKAllen/cantonese-chinese-parallel-corpus
 
 Usage:
-    python data/ld/convert_ld.py [--n-sentences 10000] [--device mps|cpu]
+    python data/ld/convert_ld.py
 """
 import argparse
 import json
