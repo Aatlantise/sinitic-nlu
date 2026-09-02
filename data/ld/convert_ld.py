@@ -10,7 +10,7 @@ acceptability-dataset.ipynb: https://github.com/Aatlantise/canto-nlu/blob/helena
 Source corpus: HKAllen/cantonese-chinese-parallel-corpus
 
 Usage:
-    python data/ld/convert_ld.py
+    python data/ld/convert_ld.py [--n-sentences 10000] [--device mps|cpu]
 """
 import argparse
 import json
